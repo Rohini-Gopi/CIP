@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Certificate Fields Management</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .nav-links {
+            margin-top: 15px;
+        }
+
+        .nav-links a {
+            color: white;
+            text-decoration: none;
+            margin: 0 15px;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+
+        .nav-links a:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .info-box {
+            background: #d1ecf1;
+            color: #0c5460;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 30px;
+            border-left: 4px solid #17a2b8;
+        }
+
+        .info-box h4 {
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .actions-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #764ba2;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .fields-list {
+            display: grid;
+            gap: 20px;
+        }
+
+        .field-card {
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+            background: #fafafa;
+            transition: all 0.3s ease;
+        }
+
+        .field-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .field-card.disabled {
+            opacity: 0.6;
+            background: #f0f0f0;
+        }
+
+        .field-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .field-title {
+            font-size: 1.3em;
+            color: #333;
+            font-weight: bold;
+        }
+
+        .field-badges {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+
+        .badge-mandatory {
+            background: #dc3545;
+            color: white;
+        }
+
+        .badge-optional {
+            background: #6c757d;
+            color: white;
+        }
+
+        .badge-enabled {
+            background: #28a745;
+            color: white;
+        }
+
+        .badge-disabled {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .badge-expiry {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .field-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .field-detail {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .field-detail-label {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .field-detail-value {
+            font-size: 1em;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .field-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-sm {
+            padding: 8px 16px;
+            font-size: 0.9em;
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-dialog {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+        }
+
+        .modal-dialog h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .form-group-checkbox input[type="checkbox"] {
+            width: auto;
+            cursor: pointer;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 25px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            display: none;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border-left: 4px solid #dc3545;
+            display: none;
+        }
+
+        .error-message.active {
+            display: block;
+        }
+
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border-left: 4px solid #28a745;
+            display: none;
+        }
+
+        .success-message.active {
+            display: block;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .empty-state h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔧 Admin Panel</h1>
+            <p>Certificate Fields Management</p>
+            <div class="nav-links">
+                <a href="/">User View</a>
+                <a href="/admin">Admin Panel</a>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="info-box">
+                <h4>📋 Admin Controls</h4>
+                <p><strong>• Add Fields:</strong> Create new certificate upload fields with custom metadata</p>
+                <p><strong>• Enable/Disable:</strong> Control which fields are visible to users</p>
+                <p><strong>• Configure:</strong> Set expiry validation, mandatory status, expected certificate types, and allowed file types (PDF, JPG, PNG, TIFF, WebP)</p>
+                <p><strong>• Changes take effect immediately:</strong> User interface updates automatically</p>
+            </div>
+
+            <div class="error-message" id="errorMessage"></div>
+            <div class="success-message" id="successMessage"></div>
+
+            <div class="actions-bar">
+                <h2 style="color: #333;">Certificate Fields</h2>
+                <button class="btn btn-primary" onclick="showAddFieldModal()">+ Add New Field</button>
+            </div>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p style="margin-top: 10px;">Loading fields...</p>
+            </div>
+
+            <div class="fields-list" id="fieldsList"></div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Field Modal -->
+    <div class="modal-overlay" id="fieldModal" onclick="if(event.target === this) hideFieldModal()">
+        <div class="modal-dialog" onclick="event.stopPropagation()">
+            <h3 id="modalTitle">Add New Field</h3>
+            <form id="fieldForm" onsubmit="saveField(event)">
+                <div class="form-group">
+                    <label for="fieldName">Field Name *</label>
+                    <input type="text" id="fieldName" required placeholder="e.g., Income Certificate">
+                </div>
+
+                <div class="form-group">
+                    <label for="expectedCategory">Expected Certificate Category *</label>
+                    <select id="expectedCategory" required>
+                        <option value="">Select category...</option>
+                        <option value="Income Certificate">Income Certificate</option>
+                        <option value="Community Certificate">Community Certificate</option>
+                        <option value="Educational Certificate (Anna University)">Educational Certificate (Anna University)</option>
+                        <option value="Aadhaar Card">Aadhaar Card</option>
+                        <option value="Driving License">Driving License</option>
+                        <option value="Bonafide Certificate">Bonafide Certificate</option>
+                    </select>
+                </div>
+
+                <div class="form-group form-group-checkbox">
+                    <input type="checkbox" id="expiryValidationRequired">
+                    <label for="expiryValidationRequired" style="margin: 0;">Require Expiry Date Validation</label>
+                </div>
+
+                <div class="form-group form-group-checkbox">
+                    <input type="checkbox" id="mandatory">
+                    <label for="mandatory" style="margin: 0;">Mandatory Field</label>
+                </div>
+
+                <div class="form-group form-group-checkbox">
+                    <input type="checkbox" id="enabled" checked>
+                    <label for="enabled" style="margin: 0;">Enabled (visible to users)</label>
+                </div>
+
+                <div class="form-group">
+                    <label>Allowed File Types</label>
+                    <p style="font-size: 0.9em; color: #666; margin-bottom: 10px;">Select formats users can upload. Default: all formats.</p>
+                    <div class="form-group-checkbox" style="margin-bottom: 8px;">
+                        <input type="checkbox" id="allowedAll" onchange="toggleAllowedAll()">
+                        <label for="allowedAll" style="margin: 0;">All document formats (PDF, images)</label>
+                    </div>
+                    <div id="allowedFileTypesList" style="display: flex; flex-wrap: wrap; gap: 12px 20px;">
+                        <label><input type="checkbox" name="allowedType" value="pdf"> PDF</label>
+                        <label><input type="checkbox" name="allowedType" value="jpg"> JPG</label>
+                        <label><input type="checkbox" name="allowedType" value="jpeg"> JPEG</label>
+                        <label><input type="checkbox" name="allowedType" value="png"> PNG</label>
+                        <label><input type="checkbox" name="allowedType" value="tiff"> TIFF</label>
+                        <label><input type="checkbox" name="allowedType" value="webp"> WebP</label>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="hideFieldModal()">Cancel</button>
+                    <button type="submit" class="btn btn-success">Save Field</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let currentEditingFieldId = null;
+        const DEFAULT_ALLOWED_FILE_TYPES = ['pdf', 'jpg', 'jpeg', 'png', 'tiff', 'webp'];
+
+        function toggleAllowedAll() {
+            const allChecked = document.getElementById('allowedAll').checked;
+            document.querySelectorAll('input[name="allowedType"]').forEach(cb => { cb.checked = !allChecked; cb.disabled = allChecked; });
+        }
+
+        function getAllowedFileTypesFromForm() {
+            if (document.getElementById('allowedAll').checked) return DEFAULT_ALLOWED_FILE_TYPES;
+            const selected = [];
+            document.querySelectorAll('input[name="allowedType"]:checked').forEach(cb => selected.push(cb.value));
+            return selected.length ? selected : DEFAULT_ALLOWED_FILE_TYPES;
+        }
+
+        function setAllowedFileTypesInForm(allowed) {
+            if (!allowed || allowed.length === 0 || (allowed.length >= DEFAULT_ALLOWED_FILE_TYPES.length && DEFAULT_ALLOWED_FILE_TYPES.every(e => allowed.includes(e)))) {
+                document.getElementById('allowedAll').checked = true;
+                document.querySelectorAll('input[name="allowedType"]').forEach(cb => { cb.checked = false; cb.disabled = true; });
+            } else {
+                document.getElementById('allowedAll').checked = false;
+                document.querySelectorAll('input[name="allowedType"]').forEach(cb => {
+                    cb.disabled = false;
+                    cb.checked = allowed.includes(cb.value);
+                });
+            }
+        }
+
+        const CERTIFICATE_CATEGORIES = [
+            'Income Certificate',
+            'Community Certificate',
+            'Educational Certificate (Anna University)',
+            'Aadhaar Card',
+            'Driving License',
+            'Bonafide Certificate'
+        ];
+
+        function showMessage(message, isError) {
+            const errorEl = document.getElementById('errorMessage');
+            const successEl = document.getElementById('successMessage');
+            
+            if (isError) {
+                errorEl.textContent = message;
+                errorEl.classList.add('active');
+                successEl.classList.remove('active');
+                setTimeout(() => errorEl.classList.remove('active'), 5000);
+            } else {
+                successEl.textContent = message;
+                successEl.classList.add('active');
+                errorEl.classList.remove('active');
+                setTimeout(() => successEl.classList.remove('active'), 5000);
+            }
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('active', show);
+        }
+
+        async function loadFields() {
+            showLoading(true);
+            try {
+                const response = await fetch('/api/admin/fields');
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderFields(data.fields);
+                } else {
+                    showMessage('Failed to load fields: ' + (data.error || 'Unknown error'), true);
+                }
+            } catch (error) {
+                showMessage('Error loading fields: ' + error.message, true);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function renderFields(fields) {
+            const container = document.getElementById('fieldsList');
+            
+            if (!fields || fields.length === 0) {
+                container.innerHTML = '<div class="empty-state"><h3>No fields defined</h3><p>Click "Add New Field" to create your first certificate field.</p></div>';
+                return;
+            }
+
+            container.innerHTML = fields.map(field => `
+                <div class="field-card ${field.enabled ? '' : 'disabled'}">
+                    <div class="field-header">
+                        <div class="field-title">${escapeHtml(field.field_name)}</div>
+                        <div class="field-badges">
+                            ${field.mandatory ? '<span class="badge badge-mandatory">Mandatory</span>' : '<span class="badge badge-optional">Optional</span>'}
+                            ${field.enabled ? '<span class="badge badge-enabled">Enabled</span>' : '<span class="badge badge-disabled">Disabled</span>'}
+                            ${field.expiry_validation_required ? '<span class="badge badge-expiry">Expiry Validation</span>' : ''}
+                        </div>
+                    </div>
+                    <div class="field-details">
+                        <div class="field-detail">
+                            <div class="field-detail-label">Field ID</div>
+                            <div class="field-detail-value">${escapeHtml(field.id)}</div>
+                        </div>
+                        <div class="field-detail">
+                            <div class="field-detail-label">Expected Category</div>
+                            <div class="field-detail-value">${escapeHtml(field.expected_category)}</div>
+                        </div>
+                        <div class="field-detail">
+                            <div class="field-detail-label">Expiry Validation</div>
+                            <div class="field-detail-value">${field.expiry_validation_required ? 'Required' : 'Not Required'}</div>
+                        </div>
+                        <div class="field-detail">
+                            <div class="field-detail-label">Allowed File Types</div>
+                            <div class="field-detail-value">${(field.allowed_file_types && field.allowed_file_types.length) ? field.allowed_file_types.join(', ') : 'All formats'}</div>
+                        </div>
+                    </div>
+                    <div class="field-actions">
+                        <button class="btn btn-primary btn-sm" onclick="editField('${field.id}')">Edit</button>
+                        <button class="btn ${field.enabled ? 'btn-secondary' : 'btn-success'} btn-sm" onclick="toggleField('${field.id}', ${!field.enabled})">
+                            ${field.enabled ? 'Disable' : 'Enable'}
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteField('${field.id}')">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showAddFieldModal() {
+            currentEditingFieldId = null;
+            document.getElementById('modalTitle').textContent = 'Add New Field';
+            document.getElementById('fieldForm').reset();
+            document.getElementById('enabled').checked = true;
+            setAllowedFileTypesInForm(DEFAULT_ALLOWED_FILE_TYPES);
+            document.getElementById('fieldModal').classList.add('active');
+        }
+
+        function editField(fieldId) {
+            currentEditingFieldId = fieldId;
+            showLoading(true);
+            
+            fetch('/api/admin/fields')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        const field = data.fields.find(f => f.id === fieldId);
+                        if (field) {
+                            document.getElementById('modalTitle').textContent = 'Edit Field';
+                            document.getElementById('fieldName').value = field.field_name;
+                            document.getElementById('expectedCategory').value = field.expected_category;
+                            document.getElementById('expiryValidationRequired').checked = field.expiry_validation_required;
+                            document.getElementById('mandatory').checked = field.mandatory;
+                            document.getElementById('enabled').checked = field.enabled;
+                            setAllowedFileTypesInForm(field.allowed_file_types || DEFAULT_ALLOWED_FILE_TYPES);
+                            document.getElementById('fieldModal').classList.add('active');
+                        }
+                    }
+                })
+                .catch(err => showMessage('Error loading field: ' + err.message, true))
+                .finally(() => showLoading(false));
+        }
+
+        function hideFieldModal() {
+            document.getElementById('fieldModal').classList.remove('active');
+            currentEditingFieldId = null;
+        }
+
+        async function saveField(event) {
+            event.preventDefault();
+            
+            const                 fieldData = {
+                field_name: document.getElementById('fieldName').value,
+                expected_category: document.getElementById('expectedCategory').value,
+                expiry_validation_required: document.getElementById('expiryValidationRequired').checked,
+                mandatory: document.getElementById('mandatory').checked,
+                enabled: document.getElementById('enabled').checked,
+                allowed_file_types: getAllowedFileTypesFromForm()
+            };
+
+            try {
+                let response;
+                if (currentEditingFieldId) {
+                    response = await fetch(`/api/admin/fields/${currentEditingFieldId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(fieldData)
+                    });
+                } else {
+                    response = await fetch('/api/admin/fields', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(fieldData)
+                    });
+                }
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage(`Field ${currentEditingFieldId ? 'updated' : 'created'} successfully!`, false);
+                    hideFieldModal();
+                    loadFields();
+                } else {
+                    showMessage('Failed to save field: ' + (data.error || 'Unknown error'), true);
+                }
+            } catch (error) {
+                showMessage('Error saving field: ' + error.message, true);
+            }
+        }
+
+        async function toggleField(fieldId, enable) {
+            try {
+                const response = await fetch(`/api/admin/fields/${fieldId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enable })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage(`Field ${enable ? 'enabled' : 'disabled'} successfully!`, false);
+                    loadFields();
+                } else {
+                    showMessage('Failed to toggle field: ' + (data.error || 'Unknown error'), true);
+                }
+            } catch (error) {
+                showMessage('Error toggling field: ' + error.message, true);
+            }
+        }
+
+        async function deleteField(fieldId) {
+            if (!confirm('Are you sure you want to delete this field? This action cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/admin/fields/${fieldId}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('Field deleted successfully!', false);
+                    loadFields();
+                } else {
+                    showMessage('Failed to delete field: ' + (data.error || 'Unknown error'), true);
+                }
+            } catch (error) {
+                showMessage('Error deleting field: ' + error.message, true);
+            }
+        }
+
+        // Load fields on page load
+        loadFields();
+    </script>
+</body>
+</html>

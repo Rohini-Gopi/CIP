@@ -10,6 +10,9 @@ Date: 2026
 
 import os
 import re
+import shutil
+import uuid
+import json
 from flask import Flask, request, render_template, jsonify
 from werkzeug.utils import secure_filename
 import cv2
@@ -18,11 +21,39 @@ from PIL import Image
 import numpy as np
 from datetime import datetime, timedelta
 
+try:
+    import fitz  # PyMuPDF for PDF text extraction
+    HAS_PYMUPDF = True
+except ImportError:
+    HAS_PYMUPDF = False
+
 # Initialize Flask app
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'PNG', 'JPG', 'JPEG'}
+
+# All supported document formats (lowercase for validation)
+SUPPORTED_EXTENSIONS = {'pdf', 'jpg', 'jpeg', 'png', 'tiff', 'tif', 'webp'}
+# MIME types for validation (optional)
+MIME_TO_EXTENSION = {
+    'application/pdf': 'pdf',
+    'image/jpeg': 'jpeg',
+    'image/jpg': 'jpg',
+    'image/png': 'png',
+    'image/tiff': 'tiff',
+    'image/webp': 'webp',
+}
+EXTENSION_TO_MIME = {
+    'pdf': 'application/pdf',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'tiff': 'image/tiff',
+    'tif': 'image/tiff',
+    'webp': 'image/webp',
+}
+app.config['ALLOWED_EXTENSIONS'] = SUPPORTED_EXTENSIONS
+DEFAULT_ALLOWED_FILE_TYPES = ['pdf', 'jpg', 'jpeg', 'png', 'tiff', 'webp']
 
 # Create uploads directory if it doesn't exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -130,15 +161,169 @@ CERTIFICATE_PRIORITY = [
     'Bonafide Certificate',
 ]
 
+# Mapping: certificate type -> upload field/section ID (for reassignment and audit).
+# Must match frontend CERTIFICATE_TYPES keys.
+CERTIFICATE_TYPE_TO_FIELD_ID = {
+    'Income Certificate': 'income',
+    'Community Certificate': 'community',
+    'Educational Certificate (Anna University)': 'educational',
+    'Aadhaar Card': 'aadhaar',
+    'Driving License': 'license',
+    'Bonafide Certificate': 'bonafide',
+}
+AUDIT_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'audit_reassignments.log')
+FIELDS_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'certificate_fields.json')
+
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
-def allowed_file(filename):
-    """Check if the uploaded file has an allowed extension."""
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+def get_file_extension(filename):
+    """Get lowercase extension without dot."""
+    if '.' in filename:
+        return filename.rsplit('.', 1)[1].lower()
+    return ''
+
+
+def allowed_file(filename, allowed_extensions=None):
+    """
+    Check if the uploaded file has an allowed extension.
+    If allowed_extensions is provided (e.g. from field config), only those are accepted.
+    Use 'all' or None in the list to mean all supported formats.
+    """
+    ext = get_file_extension(filename)
+    if not ext:
+        return False
+    supported = SUPPORTED_EXTENSIONS
+    if allowed_extensions is not None and allowed_extensions and 'all' not in [x.lower() for x in allowed_extensions]:
+        allowed_set = {e.lower().lstrip('.') for e in allowed_extensions}
+        return ext in allowed_set and ext in supported
+    return ext in supported
+
+
+def log_reassignment(from_category, to_category, filename):
+    """Log certificate reassignment for audit purposes."""
+    try:
+        with open(AUDIT_LOG_PATH, 'a', encoding='utf-8') as f:
+            f.write(f"{datetime.now().isoformat()} | Reassignment | from {from_category} | to {to_category} | file {filename}\n")
+    except Exception:
+        pass
+
+
+def log_dl_expiry_extraction(expiry_date_str):
+    """Log extracted Driving License expiry date for debugging and audit."""
+    try:
+        with open(AUDIT_LOG_PATH, 'a', encoding='utf-8') as f:
+            f.write(f"{datetime.now().isoformat()} | DL_EXPIRY | extracted_date: {expiry_date_str}\n")
+    except Exception:
+        pass
+
+
+def load_fields_config():
+    """Load admin-defined certificate fields from JSON file."""
+    if not os.path.exists(FIELDS_CONFIG_PATH):
+        # Initialize with default fields
+        # Default allowed file types: all document formats (can be overridden per field)
+        default_allowed = ['pdf', 'jpg', 'jpeg', 'png', 'tiff', 'webp']
+        default_fields = [
+            {
+                'id': 'income',
+                'field_name': 'Income Certificate',
+                'expected_category': 'Income Certificate',
+                'expiry_validation_required': True,
+                'mandatory': True,
+                'enabled': True,
+                'allowed_file_types': default_allowed
+            },
+            {
+                'id': 'community',
+                'field_name': 'Community Certificate',
+                'expected_category': 'Community Certificate',
+                'expiry_validation_required': False,
+                'mandatory': True,
+                'enabled': True,
+                'allowed_file_types': default_allowed
+            },
+            {
+                'id': 'license',
+                'field_name': 'Driving License',
+                'expected_category': 'Driving License',
+                'expiry_validation_required': True,
+                'mandatory': False,
+                'enabled': True,
+                'allowed_file_types': default_allowed
+            },
+            {
+                'id': 'aadhaar',
+                'field_name': 'Aadhaar Card',
+                'expected_category': 'Aadhaar Card',
+                'expiry_validation_required': False,
+                'mandatory': True,
+                'enabled': True,
+                'allowed_file_types': default_allowed
+            },
+            {
+                'id': 'educational',
+                'field_name': 'Educational Certificate (Anna University)',
+                'expected_category': 'Educational Certificate (Anna University)',
+                'expiry_validation_required': False,
+                'mandatory': False,
+                'enabled': True,
+                'allowed_file_types': default_allowed
+            },
+            {
+                'id': 'bonafide',
+                'field_name': 'Bonafide Certificate',
+                'expected_category': 'Bonafide Certificate',
+                'expiry_validation_required': False,
+                'mandatory': False,
+                'enabled': True,
+                'allowed_file_types': default_allowed
+            }
+        ]
+        save_fields_config(default_fields)
+        return default_fields
+    
+    try:
+        with open(FIELDS_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            fields = json.load(f)
+        # Ensure all fields have allowed_file_types (migration for old configs)
+        updated = False
+        for field in fields:
+            if 'allowed_file_types' not in field or not field['allowed_file_types']:
+                field['allowed_file_types'] = DEFAULT_ALLOWED_FILE_TYPES
+                updated = True
+        if updated:
+            save_fields_config(fields)
+        return fields
+    except Exception as e:
+        return []
+
+
+def save_fields_config(fields):
+    """Save admin-defined certificate fields to JSON file."""
+    try:
+        with open(FIELDS_CONFIG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(fields, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+
+def get_active_fields():
+    """Get only enabled certificate fields."""
+    all_fields = load_fields_config()
+    return [f for f in all_fields if f.get('enabled', True)]
+
+
+def get_field_by_id(field_id):
+    """Get a specific field by its ID."""
+    fields = load_fields_config()
+    for field in fields:
+        if field.get('id') == field_id:
+            return field
+    return None
 
 
 def preprocess_image(image_path):
@@ -206,6 +391,64 @@ def extract_text_ocr(image_path):
     
     except Exception as e:
         raise Exception(f"OCR extraction failed: {str(e)}")
+
+
+def extract_text_from_pdf(pdf_path):
+    """
+    Extract text from PDF. Uses PyMuPDF: text layer first; if minimal text, render page to image and OCR.
+    """
+    if not HAS_PYMUPDF:
+        raise Exception("PDF support requires PyMuPDF. Install with: pip install PyMuPDF")
+    doc = fitz.open(pdf_path)
+    try:
+        text_parts = []
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            text = page.get_text()
+            text = (text or "").strip()
+            if len(text) < 50:
+                # Likely scanned: render to image and run OCR
+                import tempfile
+                tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
+                try:
+                    os.close(tmp_fd)
+                    mat = fitz.Matrix(2.0, 2.0)
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    pix.save(tmp_path)
+                    text = extract_text_ocr(tmp_path)
+                finally:
+                    if os.path.exists(tmp_path):
+                        try:
+                            os.remove(tmp_path)
+                        except Exception:
+                            pass
+            text_parts.append(text or "")
+        return "\n\n".join(text_parts).strip()
+    finally:
+        doc.close()
+
+
+def extract_text_from_document(filepath, file_extension):
+    """
+    Normalize document to text: PDF -> PDF extraction; image -> image OCR.
+    Returns (extracted_text, original_format).
+    """
+    ext = (file_extension or "").lower().lstrip(".")
+    if ext == "pdf":
+        text = extract_text_from_pdf(filepath)
+        return text, "pdf"
+    if ext in ("jpg", "jpeg", "png", "tiff", "tif", "webp"):
+        if ext in ("tiff", "tif", "webp"):
+            # PIL reads TIFF/WebP; run Tesseract on PIL Image
+            pil_img = Image.open(filepath)
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
+            custom_config = r'--oem 3 --psm 6'
+            text = pytesseract.image_to_string(pil_img, config=custom_config)
+        else:
+            text = extract_text_ocr(filepath)
+        return (text or "").strip(), ext
+    raise ValueError(f"Unsupported format: {ext}")
 
 
 def extract_date_from_text(text, certificate_type):
@@ -343,13 +586,21 @@ def extract_date_from_text(text, certificate_type):
         return None, None, None
         
     # ========================================================================
-    # DRIVING LICENSE: New Indian DL format (Validity NT/TR) and legacy (Valid Till)
+    # DRIVING LICENSE: Expiry date extraction (DigiLocker, NT/TR, legacy)
     # ========================================================================
-    # IGNORE for validity decision: Date of Birth, Issue Date, TR (unless transport).
-    # PRIORITY 1: Validity (NT); PRIORITY 2: Valid Till; PRIORITY 3: Not Verified.
+    # Keywords (authoritative for validity): Date of Expiry, Expiry Date, Valid Till, Valid Upto.
+    # IGNORE: Date of Birth, Issue Date, digitally signed date, PDF timestamp.
+    # Rule: Current_Date <= Date_of_Expiry -> VALID; else EXPIRED.
     # ========================================================================
     elif certificate_type == 'Driving License':
         _fmt_d = '%d-%m-%Y'
+
+        # Normalize OCR text: collapse multiple spaces/newlines for keyword+date proximity
+        text_normalized = re.sub(r'\s+', ' ', (text or '').strip())
+        text_lower_norm = text_normalized.lower()
+        # Also keep line-based search for "Date of Expiry : 18-07-2046" on same line
+        lines = [re.sub(r'\s+', ' ', line.strip()) for line in text.split('\n') if line.strip()]
+        text_lower = text_lower_norm if text_normalized else text.lower()
 
         def _parse_ddmm(date_s):
             """Parse DD-MM-YYYY or DD/MM/YYYY to datetime. Returns None on failure."""
@@ -364,13 +615,46 @@ def extract_date_from_text(text, certificate_type):
             except (ValueError, IndexError):
                 return None
 
-        # STRICT regex patterns (case-insensitive via text_lower)
-        # Validity (NT): validity\s*\(nt\)\s*(DD-MM-YYYY)
-        PATTERN_NT = r'validity\s*\(\s*nt\s*\)\s*(\d{2}[-/]\d{2}[-/]\d{4})'
-        # Validity (TR): validity\s*\(tr\)\s*(DD-MM-YYYY)
-        PATTERN_TR = r'validity\s*\(\s*tr\s*\)\s*(\d{2}[-/]\d{2}[-/]\d{4})'
-        # Valid Till (legacy): valid\s*till\s*(DD-MM-YYYY)
-        PATTERN_VALID_TILL = r'valid\s*till\s*(\d{2}[-/]\d{2}[-/]\d{4})'
+        # Date pattern: DD-MM-YYYY or DD/MM/YYYY (1 or 2 digits for d/m)
+        date_pattern_dl = r'(\d{1,2})[-/](\d{1,2})[-/](\d{4})'
+
+        def _extract_expiry_by_keywords(where_lower, where_raw):
+            """Search for expiry keywords and return first valid date. Ignores issue/signature dates."""
+            # Order: Date of Expiry (DigiLocker), Expiry Date, Valid Till, Valid Upto, Valid Until
+            patterns = [
+                (r'date\s+of\s+expiry\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})', 'date of expiry'),
+                (r'expiry\s+date\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})', 'expiry date'),
+                (r'valid\s+till\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})', 'valid till'),
+                (r'valid\s+upto\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})', 'valid upto'),
+                (r'valid\s+up\s+to\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})', 'valid up to'),
+                (r'valid\s+until\s*:?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})', 'valid until'),
+            ]
+            for pat, name in patterns:
+                m = re.search(pat, where_lower)
+                if m:
+                    dt = _parse_ddmm(m.group(1))
+                    if dt:
+                        return dt
+            return None
+
+        # 1) Try normalized full text (handles "Date of Expiry : 18-07-2046")
+        expiry_date = _extract_expiry_by_keywords(text_lower_norm, text_normalized)
+
+        # 2) Try line-by-line (handles multi-line or spaced formatting)
+        if not expiry_date:
+            for line in lines:
+                line_low = line.lower()
+                # Skip lines that are clearly not expiry (digitally signed, PDF, etc.)
+                if 'digitally signed' in line_low or 'tcpdf' in line_low or 'it act' in line_low:
+                    continue
+                expiry_date = _extract_expiry_by_keywords(line_low, line)
+                if expiry_date:
+                    break
+
+        # 3) Legacy patterns: Validity (NT), Valid Till, Validity (TR)
+        PATTERN_NT = r'validity\s*\(\s*nt\s*\)\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})'
+        PATTERN_TR = r'validity\s*\(\s*tr\s*\)\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})'
+        PATTERN_VALID_TILL = r'valid\s*till\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4})'
 
         nt_match = re.search(PATTERN_NT, text_lower)
         tr_match = re.search(PATTERN_TR, text_lower)
@@ -389,6 +673,10 @@ def extract_date_from_text(text, certificate_type):
         if vt_dt:
             valid_till_str = vt_dt.strftime(_fmt_d)
 
+        # Use first found: explicit expiry keywords > NT > Valid Till > TR
+        if not expiry_date:
+            expiry_date = nt_dt or vt_dt or tr_dt
+
         # Issue Date (for display only; IGNORE for validity decision)
         issue_date_str = None
         issue_keywords = ['issue date', 'date of issue', 'issued on', 'issued']
@@ -404,11 +692,6 @@ def extract_date_from_text(text, certificate_type):
                     except ValueError:
                         pass
 
-        # PRIORITY 1: Validity (NT) -> use as expiry_date for validation
-        # PRIORITY 2: Valid Till (legacy) -> use as expiry_date
-        # PRIORITY 3: neither -> expiry_date = None
-        expiry_date = nt_dt if nt_dt else (vt_dt if vt_dt else None)
-
         date_info = {
             'expiry_date': expiry_date,
             'issue_date_str': issue_date_str,
@@ -418,6 +701,8 @@ def extract_date_from_text(text, certificate_type):
         }
         date_type = 'expiry_date' if expiry_date else None
         date_string = expiry_date.strftime(_fmt_d) if expiry_date else None
+        if expiry_date:
+            log_dl_expiry_extraction(date_string)
         return date_info, date_string, date_type
 
 
@@ -776,8 +1061,149 @@ def validate_certificate_match(expected_type, detected_type, matched_primary_key
 
 @app.route('/')
 def index():
-    """Render the main upload page."""
+    """Render the main upload page (user interface)."""
     return render_template('index.html')
+
+
+@app.route('/admin')
+def admin():
+    """Render the admin interface."""
+    return render_template('admin.html')
+
+
+@app.route('/api/user/fields', methods=['GET'])
+def get_user_fields():
+    """Get active certificate fields for user interface."""
+    active_fields = get_active_fields()
+    return jsonify({
+        'success': True,
+        'fields': active_fields
+    })
+
+
+@app.route('/api/admin/fields', methods=['GET'])
+def get_admin_fields():
+    """Get all certificate fields (admin view - includes disabled)."""
+    all_fields = load_fields_config()
+    return jsonify({
+        'success': True,
+        'fields': all_fields
+    })
+
+
+@app.route('/api/admin/fields', methods=['POST'])
+def create_field():
+    """Create a new certificate field."""
+    try:
+        data = request.get_json()
+        
+        # Validate required fields
+        required = ['field_name', 'expected_category', 'expiry_validation_required', 'mandatory']
+        if not all(k in data for k in required):
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+        
+        # Validate expected_category exists in CERTIFICATE_KEYWORDS
+        if data['expected_category'] not in CERTIFICATE_KEYWORDS:
+            return jsonify({
+                'success': False,
+                'error': f'Invalid expected_category. Must be one of: {", ".join(CERTIFICATE_KEYWORDS.keys())}'
+            }), 400
+        
+        # Generate field ID from field_name (sanitize)
+        field_id = data.get('id') or re.sub(r'[^a-z0-9]+', '_', data['field_name'].lower()).strip('_')
+        
+        # Check if ID already exists
+        existing_fields = load_fields_config()
+        if any(f.get('id') == field_id for f in existing_fields):
+            field_id = f"{field_id}_{uuid.uuid4().hex[:8]}"
+        
+        allowed = data.get('allowed_file_types')
+        if allowed is None or (isinstance(allowed, list) and 'all' in [x.lower() for x in (allowed or [])]):
+            allowed = DEFAULT_ALLOWED_FILE_TYPES
+        if not isinstance(allowed, list):
+            allowed = DEFAULT_ALLOWED_FILE_TYPES
+        
+        new_field = {
+            'id': field_id,
+            'field_name': data['field_name'],
+            'expected_category': data['expected_category'],
+            'expiry_validation_required': bool(data['expiry_validation_required']),
+            'mandatory': bool(data['mandatory']),
+            'enabled': data.get('enabled', True),
+            'allowed_file_types': allowed
+        }
+        
+        existing_fields.append(new_field)
+        if save_fields_config(existing_fields):
+            return jsonify({'success': True, 'field': new_field}), 201
+        else:
+            return jsonify({'success': False, 'error': 'Failed to save field'}), 500
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/admin/fields/<field_id>', methods=['PUT'])
+def update_field(field_id):
+    """Update an existing certificate field."""
+    try:
+        data = request.get_json()
+        fields = load_fields_config()
+        
+        field_index = None
+        for i, field in enumerate(fields):
+            if field.get('id') == field_id:
+                field_index = i
+                break
+        
+        if field_index is None:
+            return jsonify({'success': False, 'error': 'Field not found'}), 404
+        
+        # Update field
+        if 'field_name' in data:
+            fields[field_index]['field_name'] = data['field_name']
+        if 'expected_category' in data:
+            if data['expected_category'] not in CERTIFICATE_KEYWORDS:
+                return jsonify({
+                    'success': False,
+                    'error': f'Invalid expected_category. Must be one of: {", ".join(CERTIFICATE_KEYWORDS.keys())}'
+                }), 400
+            fields[field_index]['expected_category'] = data['expected_category']
+        if 'expiry_validation_required' in data:
+            fields[field_index]['expiry_validation_required'] = bool(data['expiry_validation_required'])
+        if 'mandatory' in data:
+            fields[field_index]['mandatory'] = bool(data['mandatory'])
+        if 'enabled' in data:
+            fields[field_index]['enabled'] = bool(data['enabled'])
+        if 'allowed_file_types' in data:
+            allowed = data['allowed_file_types']
+            if allowed is None or (isinstance(allowed, list) and 'all' in [x.lower() for x in (allowed or [])]):
+                allowed = DEFAULT_ALLOWED_FILE_TYPES
+            fields[field_index]['allowed_file_types'] = allowed if isinstance(allowed, list) else DEFAULT_ALLOWED_FILE_TYPES
+        
+        if save_fields_config(fields):
+            return jsonify({'success': True, 'field': fields[field_index]})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to save field'}), 500
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/admin/fields/<field_id>', methods=['DELETE'])
+def delete_field(field_id):
+    """Delete a certificate field."""
+    try:
+        fields = load_fields_config()
+        fields = [f for f in fields if f.get('id') != field_id]
+        
+        if save_fields_config(fields):
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to delete field'}), 500
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/upload', methods=['POST'])
@@ -813,6 +1239,42 @@ def upload_file():
     try:
         # Get expected certificate type from request
         expected_certificate = request.form.get('expected_certificate', '').strip()
+        field_id = request.form.get('field_id', '').strip()
+        
+        # Validate field exists and is enabled (if field_id provided)
+        if field_id:
+            field = get_field_by_id(field_id)
+            if not field:
+                return jsonify({
+                    'error': f'Field with ID "{field_id}" not found',
+                    'expected_certificate': expected_certificate,
+                    'detected_certificate': 'Unknown',
+                    'status': 'Not Classified',
+                    'message': 'Invalid field ID',
+                    'extracted_text': '',
+                    'matched_primary_keywords': [],
+                    'extracted_date': None,
+                    'current_date': datetime.now().strftime('%d/%m/%Y'),
+                    'validity_period': None,
+                    'validity_info': None
+                }), 400
+            if not field.get('enabled', True):
+                return jsonify({
+                    'error': f'Field "{field.get("field_name")}" is currently disabled',
+                    'expected_certificate': expected_certificate,
+                    'detected_certificate': 'Unknown',
+                    'status': 'Not Classified',
+                    'message': 'This field is disabled by admin',
+                    'extracted_text': '',
+                    'matched_primary_keywords': [],
+                    'extracted_date': None,
+                    'current_date': datetime.now().strftime('%d/%m/%Y'),
+                    'validity_period': None,
+                    'validity_info': None
+                }), 400
+            # Use expected_category from field if not provided
+            if not expected_certificate:
+                expected_certificate = field.get('expected_category', '')
         
         # Validate expected certificate type
         # Check against predefined certificate types in keyword dictionary
@@ -866,14 +1328,20 @@ def upload_file():
                 'validity_info': None
             }), 400
         
+        # Allowed file types for this field (default: all document formats)
+        allowed_types = DEFAULT_ALLOWED_FILE_TYPES
+        if field_id and field:
+            allowed_types = field.get('allowed_file_types') or DEFAULT_ALLOWED_FILE_TYPES
+        
         # Check if file extension is allowed
-        if not allowed_file(file.filename):
+        if not allowed_file(file.filename, allowed_types):
+            allowed_str = ', '.join(sorted(set(allowed_types))) if allowed_types else 'pdf, jpg, jpeg, png, tiff, webp'
             return jsonify({
-                'error': 'Invalid file type. Please upload JPG, JPEG, or PNG files.',
+                'error': f'Invalid file type. Allowed formats: {allowed_str}',
                 'expected_certificate': expected_certificate,
                 'detected_certificate': 'Unknown',
                 'status': 'Not Classified',
-                'message': 'Invalid file format',
+                'message': 'Unsupported file format',
                 'extracted_text': '',
                 'matched_primary_keywords': [],
                 'extracted_date': None,
@@ -882,32 +1350,103 @@ def upload_file():
                 'validity_info': None
             }), 400
         
-        # Save uploaded file
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+        file_ext = get_file_extension(file.filename)
+        if file_ext not in SUPPORTED_EXTENSIONS:
+            return jsonify({
+                'error': 'Unsupported file format.',
+                'expected_certificate': expected_certificate,
+                'detected_certificate': 'Unknown',
+                'status': 'Not Classified',
+                'message': 'Unsupported file format',
+                'extracted_text': '',
+                'matched_primary_keywords': [],
+                'extracted_date': None,
+                'current_date': datetime.now().strftime('%d/%m/%Y'),
+                'validity_period': None,
+                'validity_info': None
+            }), 400
         
-        # Extract text using OCR
-        extracted_text = extract_text_ocr(filepath)
+        # Save to temp file first; only move to permanent storage if category matches or on reassignment
+        filename = secure_filename(file.filename)
+        temp_name = f"temp_{uuid.uuid4().hex}_{filename}"
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_name)
+        file.save(temp_path)
+        
+        try:
+            # Normalize document into common OCR pipeline (PDF or image -> text)
+            extracted_text, original_format = extract_text_from_document(temp_path, file_ext)
+        except Exception as ocr_err:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+            raise ocr_err
         
         # Detect certificate type from extracted text
         detected_certificate, matched_primary_keywords = detect_certificate_type(extracted_text)
         
         # Perform STRICT validation: Check if detected matches expected
-        # Also performs date validity checking for Income Certificate and Driving License
         validation_result = validate_certificate_match(
             expected_certificate,
             detected_certificate,
             matched_primary_keywords,
-            extracted_text  # Pass text for date extraction
+            extracted_text
         )
         
-        # Clean up uploaded file (optional - remove if you want to keep files)
-        # os.remove(filepath)
+        # Smart reassignment: category mismatch but detected is known -> offer reassignment (do not save under wrong category)
+        reassignment_from = request.form.get('reassignment_from', '').strip()
+        if reassignment_from:
+            log_reassignment(reassignment_from, expected_certificate, filename)
         
-        # Return results with strict validation and date information
+        category_mismatch = (
+            detected_certificate != expected_certificate
+            and detected_certificate != "Unknown"
+        )
+        
+        if category_mismatch:
+            # Do not save file under wrong category; remove temp file
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+            return jsonify({
+                'success': True,
+                'category_mismatch': True,
+                'expected_certificate': expected_certificate,
+                'detected_certificate': detected_certificate,
+                'status': validation_result['status'],
+                'message': validation_result['message'],
+                'extracted_text': extracted_text,
+                'matched_primary_keywords': validation_result.get('matched_primary_keywords', matched_primary_keywords),
+                'extracted_date': validation_result.get('extracted_date'),
+                'current_date': validation_result.get('current_date'),
+                'validity_info': validation_result.get('validity_info'),
+                'validity_period': validation_result.get('validity_period'),
+                'validity_start_date': validation_result.get('validity_start_date'),
+                'validity_end_date': validation_result.get('validity_end_date'),
+                'validity_source': validation_result.get('validity_source'),
+                'issue_date': validation_result.get('issue_date'),
+                'validity_nt': validation_result.get('validity_nt'),
+                'validity_tr': validation_result.get('validity_tr'),
+                'original_format': file_ext,
+            })
+        
+        # Match or Unknown: save to permanent location (avoid duplicate filename)
+        final_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if os.path.exists(final_path):
+            base, ext = os.path.splitext(filename)
+            final_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{base}_{uuid.uuid4().hex[:8]}{ext}")
+            filename = os.path.basename(final_path)
+        try:
+            os.rename(temp_path, final_path)
+        except OSError:
+            shutil.move(temp_path, final_path)
+        
         return jsonify({
             'success': True,
+            'category_mismatch': False,
             'expected_certificate': expected_certificate,
             'detected_certificate': detected_certificate,
             'status': validation_result['status'],
@@ -924,6 +1463,7 @@ def upload_file():
             'issue_date': validation_result.get('issue_date'),
             'validity_nt': validation_result.get('validity_nt'),
             'validity_tr': validation_result.get('validity_tr'),
+            'original_format': file_ext,
         })
     
     except Exception as e:

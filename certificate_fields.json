@@ -1,0 +1,98 @@
+[
+  {
+    "id": "income",
+    "field_name": "Income Certificate",
+    "expected_category": "Income Certificate",
+    "expiry_validation_required": true,
+    "mandatory": true,
+    "enabled": true,
+    "allowed_file_types": [
+      "pdf",
+      "jpg",
+      "jpeg",
+      "png",
+      "tiff",
+      "webp"
+    ]
+  },
+  {
+    "id": "community",
+    "field_name": "Community Certificate",
+    "expected_category": "Community Certificate",
+    "expiry_validation_required": false,
+    "mandatory": true,
+    "enabled": true,
+    "allowed_file_types": [
+      "pdf",
+      "jpg",
+      "jpeg",
+      "png",
+      "tiff",
+      "webp"
+    ]
+  },
+  {
+    "id": "aadhaar",
+    "field_name": "Aadhaar Card",
+    "expected_category": "Aadhaar Card",
+    "expiry_validation_required": false,
+    "mandatory": true,
+    "enabled": true,
+    "allowed_file_types": [
+      "pdf",
+      "jpg",
+      "jpeg",
+      "png",
+      "tiff",
+      "webp"
+    ]
+  },
+  {
+    "id": "educational",
+    "field_name": "Educational Certificate (Anna University)",
+    "expected_category": "Educational Certificate (Anna University)",
+    "expiry_validation_required": false,
+    "mandatory": false,
+    "enabled": true,
+    "allowed_file_types": [
+      "pdf",
+      "jpg",
+      "jpeg",
+      "png",
+      "tiff",
+      "webp"
+    ]
+  },
+  {
+    "id": "driving_license",
+    "field_name": "Driving license",
+    "expected_category": "Driving License",
+    "expiry_validation_required": true,
+    "mandatory": false,
+    "enabled": true,
+    "allowed_file_types": [
+      "pdf",
+      "jpg",
+      "jpeg",
+      "png",
+      "tiff",
+      "webp"
+    ]
+  },
+  {
+    "id": "bonafide_certificate",
+    "field_name": "Bonafide certificate",
+    "expected_category": "Bonafide Certificate",
+    "expiry_validation_required": false,
+    "mandatory": false,
+    "enabled": true,
+    "allowed_file_types": [
+      "pdf",
+      "jpg",
+      "jpeg",
+      "png",
+      "tiff",
+      "webp"
+    ]
+  }
+]

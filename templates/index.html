@@ -336,6 +336,103 @@
             color: #721c24;
             border-left: 4px solid #dc3545;
         }
+
+        /* Reassignment modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-dialog {
+            background: white;
+            border-radius: 12px;
+            padding: 28px;
+            max-width: 480px;
+            width: 90%;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+        }
+
+        .modal-dialog h3 {
+            color: #333;
+            margin-bottom: 16px;
+            font-size: 1.25em;
+        }
+
+        .modal-dialog p {
+            color: #555;
+            line-height: 1.6;
+            margin-bottom: 24px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .modal-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .modal-btn-cancel {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .modal-btn-cancel:hover {
+            background: #d0d0d0;
+        }
+
+        .modal-btn-confirm {
+            background: #28a745;
+            color: white;
+        }
+
+        .modal-btn-confirm:hover {
+            background: #218838;
+        }
+
+        .toast-confirmation {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #28a745;
+            color: white;
+            padding: 14px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            z-index: 1001;
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .toast-confirmation.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
     </style>
 </head>
 <body>
@@ -347,351 +444,329 @@
 
         <div class="content">
             <div class="info-box">
-                <h4>⚠️ Important: Strict Validation Rules</h4>
-                <p><strong>• Each certificate must be uploaded in its respective field</strong></p>
+                <h4>⚠️ Important: Validation &amp; Reassignment</h4>
+                <p><strong>• Each certificate should be uploaded in its respective field</strong></p>
                 <p><strong>• Accepted:</strong> Uploaded certificate matches the selected field</p>
-                <p><strong>• Rejected:</strong> Uploaded certificate does NOT match the selected field</p>
+                <p><strong>• Wrong field?</strong> If you upload the wrong document type (e.g. Community Certificate in Income field), you’ll be asked to move it to the correct section automatically.</p>
                 <p><strong>• Not Classified:</strong> Certificate type could not be determined</p>
+                <p><strong>• Supported formats:</strong> PDF, JPEG, PNG, TIFF, WebP (per-field allowed types are set by admin)</p>
             </div>
 
-            <!-- Aadhaar Card Section -->
-            <div class="certificate-section" id="aadhaarSection">
-                <h2>Aadhaar Card Upload</h2>
-                <div class="upload-area" id="aadhaarUploadArea">
-                    <p>Upload Aadhaar Card Image (JPG, JPEG, PNG)</p>
-                    <div class="file-input-wrapper">
-                        <input type="file" id="aadhaarFileInput" accept="image/jpeg,image/jpg,image/png" />
-                        <label for="aadhaarFileInput" class="file-input-label">Choose File</label>
-                    </div>
-                    <div class="file-name" id="aadhaarFileName"></div>
-                    <button class="verify-btn" id="aadhaarVerifyBtn" disabled>Verify Aadhaar Card</button>
-                    <div class="loading" id="aadhaarLoading">
-                        <div class="spinner"></div>
-                        <p style="margin-top: 8px; font-size: 0.9em;">Processing...</p>
-                    </div>
-                    <div class="error-message" id="aadhaarError"></div>
-                </div>
-                <div class="result-card" id="aadhaarResult">
-                    <h3>Verification Result</h3>
-                    <div class="result-item">
-                        <div class="result-label">Expected Certificate:</div>
-                        <div class="result-value" id="aadhaarExpected">Aadhaar Card</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Detected Certificate:</div>
-                        <div class="result-value" id="aadhaarDetected">-</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Status:</div>
-                        <div class="result-value">
-                            <span id="aadhaarStatus">-</span>
-                        </div>
-                    </div>
-                    <div class="result-item" id="aadhaarMessage"></div>
-                    <div class="result-item" id="aadhaarKeywords" style="display: none;">
-                        <div class="result-label">Matched PRIMARY Keywords:</div>
-                        <div class="keywords-list" id="aadhaarKeywordsList"></div>
-                    </div>
-                    <button class="view-text-btn" id="aadhaarViewTextBtn" onclick="toggleExtractedText('aadhaar')">View Extracted Text</button>
-                    <div class="result-item extracted-text-container" id="aadhaarTextContainer">
-                        <div class="result-label">Extracted Text:</div>
-                        <div class="result-value text-display" id="aadhaarText">-</div>
-                    </div>
-                </div>
+            <div style="text-align: center; margin-bottom: 20px;">
+                <a href="/admin" style="color: #667eea; text-decoration: none; padding: 8px 16px; background: rgba(102, 126, 234, 0.1); border-radius: 5px; display: inline-block;">Admin Panel</a>
             </div>
 
-            <!-- Community Certificate Section -->
-            <div class="certificate-section" id="communitySection">
-                <h2>Community Certificate Upload</h2>
-                <div class="upload-area" id="communityUploadArea">
-                    <p>Upload Community Certificate Image (JPG, JPEG, PNG)</p>
-                    <div class="file-input-wrapper">
-                        <input type="file" id="communityFileInput" accept="image/jpeg,image/jpg,image/png" />
-                        <label for="communityFileInput" class="file-input-label">Choose File</label>
-                    </div>
-                    <div class="file-name" id="communityFileName"></div>
-                    <button class="verify-btn" id="communityVerifyBtn" disabled>Verify Community Certificate</button>
-                    <div class="loading" id="communityLoading">
-                        <div class="spinner"></div>
-                        <p style="margin-top: 8px; font-size: 0.9em;">Processing...</p>
-                    </div>
-                    <div class="error-message" id="communityError"></div>
-                </div>
-                <div class="result-card" id="communityResult">
-                    <h3>Verification Result</h3>
-                    <div class="result-item">
-                        <div class="result-label">Expected Certificate:</div>
-                        <div class="result-value" id="communityExpected">Community Certificate</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Detected Certificate:</div>
-                        <div class="result-value" id="communityDetected">-</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Status:</div>
-                        <div class="result-value">
-                            <span id="communityStatus">-</span>
-                        </div>
-                    </div>
-                    <div class="result-item" id="communityMessage"></div>
-                    <div class="result-item" id="communityKeywords" style="display: none;">
-                        <div class="result-label">Matched PRIMARY Keywords:</div>
-                        <div class="keywords-list" id="communityKeywordsList"></div>
-                    </div>
-                    <button class="view-text-btn" id="communityViewTextBtn" onclick="toggleExtractedText('community')">View Extracted Text</button>
-                    <div class="result-item extracted-text-container" id="communityTextContainer">
-                        <div class="result-label">Extracted Text:</div>
-                        <div class="result-value text-display" id="communityText">-</div>
-                    </div>
-                </div>
+            <div class="loading" id="pageLoading" style="text-align: center; padding: 40px;">
+                <div class="spinner"></div>
+                <p style="margin-top: 10px;">Loading certificate fields...</p>
             </div>
 
-            <!-- Income Certificate Section -->
-            <div class="certificate-section" id="incomeSection">
-                <h2>Income Certificate Upload</h2>
-                <div class="upload-area" id="incomeUploadArea">
-                    <p>Upload Income Certificate Image (JPG, JPEG, PNG)</p>
-                    <div class="file-input-wrapper">
-                        <input type="file" id="incomeFileInput" accept="image/jpeg,image/jpg,image/png" />
-                        <label for="incomeFileInput" class="file-input-label">Choose File</label>
-                    </div>
-                    <div class="file-name" id="incomeFileName"></div>
-                    <button class="verify-btn" id="incomeVerifyBtn" disabled>Verify Income Certificate</button>
-                    <div class="loading" id="incomeLoading">
-                        <div class="spinner"></div>
-                        <p style="margin-top: 8px; font-size: 0.9em;">Processing...</p>
-                    </div>
-                    <div class="error-message" id="incomeError"></div>
-                </div>
-                <div class="result-card" id="incomeResult">
-                    <h3>Verification Result</h3>
-                    <div class="result-item">
-                        <div class="result-label">Expected Certificate:</div>
-                        <div class="result-value" id="incomeExpected">Income Certificate</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Detected Certificate:</div>
-                        <div class="result-value" id="incomeDetected">-</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Status:</div>
-                        <div class="result-value">
-                            <span id="incomeStatus">-</span>
-                        </div>
-                    </div>
-                    <div class="result-item" id="incomeValidityStartInfo" style="display: none;">
-                        <div class="result-label">Validity Start Date:</div>
-                        <div class="result-value" id="incomeValidityStart">-</div>
-                    </div>
-                    <div class="result-item" id="incomeValidityEndInfo" style="display: none;">
-                        <div class="result-label">Validity End Date:</div>
-                        <div class="result-value" id="incomeValidityEnd">-</div>
-                    </div>
-                    <div class="result-item" id="incomeCurrentDateInfo" style="display: none;">
-                        <div class="result-label">Current Date:</div>
-                        <div class="result-value" id="incomeCurrentDate">-</div>
-                    </div>
-                    <div class="result-item" id="incomeValidityInfo" style="display: none;">
-                        <div class="result-label">Validity Information:</div>
-                        <div class="result-value" id="incomeValidity">-</div>
-                    </div>
-                    <div class="result-item" id="incomeValidityPeriodInfo" style="display: none;">
-                        <div class="result-label">Validity Period:</div>
-                        <div class="result-value" id="incomeValidityPeriod">-</div>
-                    </div>
-                    <div class="result-item" id="incomeValiditySourceInfo" style="display: none;">
-                        <div class="result-label">Validity Source:</div>
-                        <div class="result-value" id="incomeValiditySource">-</div>
-                    </div>
-                    <div class="result-item" id="incomeMessage"></div>
-                    <div class="result-item" id="incomeKeywords" style="display: none;">
-                        <div class="result-label">Matched PRIMARY Keywords:</div>
-                        <div class="keywords-list" id="incomeKeywordsList"></div>
-                    </div>
-                    <button class="view-text-btn" id="incomeViewTextBtn" onclick="toggleExtractedText('income')">View Extracted Text</button>
-                    <div class="result-item extracted-text-container" id="incomeTextContainer">
-                        <div class="result-label">Extracted Text:</div>
-                        <div class="result-value text-display" id="incomeText">-</div>
-                    </div>
-                </div>
-            </div>
+            <div id="fieldsContainer"></div>
 
-            <!-- Educational Certificate Section -->
-            <div class="certificate-section" id="educationalSection">
-                <h2>Educational Certificate Upload (Anna University)</h2>
-                <div class="upload-area" id="educationalUploadArea">
-                    <p>Upload Educational Certificate Image (JPG, JPEG, PNG)</p>
-                    <div class="file-input-wrapper">
-                        <input type="file" id="educationalFileInput" accept="image/jpeg,image/jpg,image/png" />
-                        <label for="educationalFileInput" class="file-input-label">Choose File</label>
-                    </div>
-                    <div class="file-name" id="educationalFileName"></div>
-                    <button class="verify-btn" id="educationalVerifyBtn" disabled>Verify Educational Certificate</button>
-                    <div class="loading" id="educationalLoading">
-                        <div class="spinner"></div>
-                        <p style="margin-top: 8px; font-size: 0.9em;">Processing...</p>
-                    </div>
-                    <div class="error-message" id="educationalError"></div>
-                </div>
-                <div class="result-card" id="educationalResult">
-                    <h3>Verification Result</h3>
-                    <div class="result-item">
-                        <div class="result-label">Expected Certificate:</div>
-                        <div class="result-value" id="educationalExpected">Educational Certificate (Anna University)</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Detected Certificate:</div>
-                        <div class="result-value" id="educationalDetected">-</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Status:</div>
-                        <div class="result-value">
-                            <span id="educationalStatus">-</span>
-                        </div>
-                    </div>
-                    <div class="result-item" id="educationalMessage"></div>
-                    <div class="result-item" id="educationalKeywords" style="display: none;">
-                        <div class="result-label">Matched PRIMARY Keywords:</div>
-                        <div class="keywords-list" id="educationalKeywordsList"></div>
-                    </div>
-                    <button class="view-text-btn" id="educationalViewTextBtn" onclick="toggleExtractedText('educational')">View Extracted Text</button>
-                    <div class="result-item extracted-text-container" id="educationalTextContainer">
-                        <div class="result-label">Extracted Text:</div>
-                        <div class="result-value text-display" id="educationalText">-</div>
-                    </div>
-                </div>
-            </div>
+        </div>
+    </div>
 
-            <!-- Bonafide Certificate Section -->
-            <div class="certificate-section" id="bonafideSection">
-                <h2>Bonafide Certificate Upload</h2>
-                <div class="upload-area" id="bonafideUploadArea">
-                    <p>Upload Bonafide Certificate Image (JPG, JPEG, PNG)</p>
-                    <div class="file-input-wrapper">
-                        <input type="file" id="bonafideFileInput" accept="image/jpeg,image/jpg,image/png" />
-                        <label for="bonafideFileInput" class="file-input-label">Choose File</label>
-                    </div>
-                    <div class="file-name" id="bonafideFileName"></div>
-                    <button class="verify-btn" id="bonafideVerifyBtn" disabled>Verify Bonafide Certificate</button>
-                    <div class="loading" id="bonafideLoading">
-                        <div class="spinner"></div>
-                        <p style="margin-top: 8px; font-size: 0.9em;">Processing...</p>
-                    </div>
-                    <div class="error-message" id="bonafideError"></div>
-                </div>
-                <div class="result-card" id="bonafideResult">
-                    <h3>Verification Result</h3>
-                    <div class="result-item">
-                        <div class="result-label">Expected Certificate:</div>
-                        <div class="result-value" id="bonafideExpected">Bonafide Certificate</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Detected Certificate:</div>
-                        <div class="result-value" id="bonafideDetected">-</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Status:</div>
-                        <div class="result-value">
-                            <span id="bonafideStatus">-</span>
-                        </div>
-                    </div>
-                    <div class="result-item" id="bonafideMessage"></div>
-                    <div class="result-item" id="bonafideKeywords" style="display: none;">
-                        <div class="result-label">Matched PRIMARY Keywords:</div>
-                        <div class="keywords-list" id="bonafideKeywordsList"></div>
-                    </div>
-                    <button class="view-text-btn" id="bonafideViewTextBtn" onclick="toggleExtractedText('bonafide')">View Extracted Text</button>
-                    <div class="result-item extracted-text-container" id="bonafideTextContainer">
-                        <div class="result-label">Extracted Text:</div>
-                        <div class="result-value text-display" id="bonafideText">-</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Driving License Section -->
-            <div class="certificate-section" id="licenseSection">
-                <h2>Driving License Upload</h2>
-                <div class="upload-area" id="licenseUploadArea">
-                    <p>Upload Driving License Image (JPG, JPEG, PNG)</p>
-                    <div class="file-input-wrapper">
-                        <input type="file" id="licenseFileInput" accept="image/jpeg,image/jpg,image/png" />
-                        <label for="licenseFileInput" class="file-input-label">Choose File</label>
-                    </div>
-                    <div class="file-name" id="licenseFileName"></div>
-                    <button class="verify-btn" id="licenseVerifyBtn" disabled>Verify Driving License</button>
-                    <div class="loading" id="licenseLoading">
-                        <div class="spinner"></div>
-                        <p style="margin-top: 8px; font-size: 0.9em;">Processing...</p>
-                    </div>
-                    <div class="error-message" id="licenseError"></div>
-                </div>
-                <div class="result-card" id="licenseResult">
-                    <h3>Verification Result</h3>
-                    <div class="result-item">
-                        <div class="result-label">Expected Certificate:</div>
-                        <div class="result-value" id="licenseExpected">Driving License</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Detected Certificate:</div>
-                        <div class="result-value" id="licenseDetected">-</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-label">Status:</div>
-                        <div class="result-value">
-                            <span id="licenseStatus">-</span>
-                        </div>
-                    </div>
-                    <div class="result-item" id="licenseIssueDateInfo" style="display: none;">
-                        <div class="result-label">Issue Date:</div>
-                        <div class="result-value" id="licenseIssueDate">-</div>
-                    </div>
-                    <div class="result-item" id="licenseValidityNTInfo" style="display: none;">
-                        <div class="result-label">Validity (NT):</div>
-                        <div class="result-value" id="licenseValidityNT">-</div>
-                    </div>
-                    <div class="result-item" id="licenseValidityTRInfo" style="display: none;">
-                        <div class="result-label">Validity (TR):</div>
-                        <div class="result-value" id="licenseValidityTR">-</div>
-                    </div>
-                    <div class="result-item" id="licenseValidityEndInfo" style="display: none;">
-                        <div class="result-label">Validity End Date:</div>
-                        <div class="result-value" id="licenseValidityEnd">-</div>
-                    </div>
-                    <div class="result-item" id="licenseCurrentDateInfo" style="display: none;">
-                        <div class="result-label">Current Date:</div>
-                        <div class="result-value" id="licenseCurrentDate">-</div>
-                    </div>
-                    <div class="result-item" id="licenseValidityInfo" style="display: none;">
-                        <div class="result-label">Validity Information:</div>
-                        <div class="result-value" id="licenseValidity">-</div>
-                    </div>
-                    <div class="result-item" id="licenseMessage"></div>
-                    <div class="result-item" id="licenseKeywords" style="display: none;">
-                        <div class="result-label">Matched PRIMARY Keywords:</div>
-                        <div class="keywords-list" id="licenseKeywordsList"></div>
-                    </div>
-                    <button class="view-text-btn" id="licenseViewTextBtn" onclick="toggleExtractedText('license')">View Extracted Text</button>
-                    <div class="result-item extracted-text-container" id="licenseTextContainer">
-                        <div class="result-label">Extracted Text:</div>
-                        <div class="result-value text-display" id="licenseText">-</div>
-                    </div>
-                </div>
+    <!-- Reassignment modal (wrong document type) -->
+    <div class="modal-overlay" id="reassignmentModal" aria-hidden="true">
+        <div class="modal-dialog">
+            <h3>Wrong document type</h3>
+            <p id="reassignmentModalMessage"></p>
+            <div class="modal-actions">
+                <button type="button" class="modal-btn modal-btn-cancel" id="reassignmentCancelBtn">Cancel and Re-upload</button>
+                <button type="button" class="modal-btn modal-btn-confirm" id="reassignmentConfirmBtn">Yes, Upload Automatically</button>
             </div>
         </div>
     </div>
 
+    <!-- Toast: document uploaded under correct category -->
+    <div class="toast-confirmation" id="reassignmentToast"></div>
+
     <script>
-        // Certificate type mappings
-        // Maps section IDs to their corresponding certificate type names
-        // Used for strict validation: each upload field expects a specific certificate type
-        const CERTIFICATE_TYPES = {
-            'aadhaar': 'Aadhaar Card',
-            'community': 'Community Certificate',
-            'income': 'Income Certificate',
-            'educational': 'Educational Certificate (Anna University)',
-            'bonafide': 'Bonafide Certificate',
-            'license': 'Driving License'
-        };
+        // Certificate type mappings (built dynamically from admin-defined fields)
+        var CERTIFICATE_TYPES = {};
+        var FIELDS_DATA = [];
+
+        // Reverse: certificate type -> section ID (for reassignment)
+        function getSectionIdForCertificateType(certificateType) {
+            for (var fieldId in CERTIFICATE_TYPES) {
+                if (CERTIFICATE_TYPES[fieldId] === certificateType) {
+                    return fieldId;
+                }
+            }
+            return null;
+        }
+
+        // Load fields from API and render
+        async function loadAndRenderFields() {
+            try {
+                document.getElementById('pageLoading').classList.add('active');
+                const response = await fetch('/api/user/fields');
+                const data = await response.json();
+                
+                if (data.success && data.fields && data.fields.length > 0) {
+                    FIELDS_DATA = data.fields;
+                    CERTIFICATE_TYPES = {};
+                    data.fields.forEach(function(field) {
+                        CERTIFICATE_TYPES[field.id] = field.expected_category;
+                    });
+                    
+                    renderFields(data.fields);
+                    initializeAllSections(data.fields);
+                } else {
+                    document.getElementById('fieldsContainer').innerHTML = 
+                        '<div style="text-align: center; padding: 40px; color: #666;"><h3>No certificate fields available</h3><p>Please contact the administrator to configure certificate fields.</p></div>';
+                }
+            } catch (error) {
+                document.getElementById('fieldsContainer').innerHTML = 
+                    '<div style="text-align: center; padding: 40px; color: #dc3545;"><h3>Error loading fields</h3><p>' + error.message + '</p></div>';
+            } finally {
+                document.getElementById('pageLoading').classList.remove('active');
+            }
+        }
+
+        // Render field sections dynamically
+        function renderFields(fields) {
+            const container = document.getElementById('fieldsContainer');
+            container.innerHTML = fields.map(function(field) {
+                const fieldId = field.id;
+                const isDateValidation = field.expiry_validation_required && 
+                    (field.expected_category === 'Income Certificate' || field.expected_category === 'Driving License');
+                const isLicense = field.expected_category === 'Driving License';
+                
+                let dateFieldsHtml = '';
+                if (isDateValidation) {
+                    if (field.expected_category === 'Income Certificate') {
+                        dateFieldsHtml = `
+                            <div class="result-item" id="${fieldId}ValidityStartInfo" style="display: none;">
+                                <div class="result-label">Validity Start Date:</div>
+                                <div class="result-value" id="${fieldId}ValidityStart">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}ValidityEndInfo" style="display: none;">
+                                <div class="result-label">Validity End Date:</div>
+                                <div class="result-value" id="${fieldId}ValidityEnd">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}CurrentDateInfo" style="display: none;">
+                                <div class="result-label">Current Date:</div>
+                                <div class="result-value" id="${fieldId}CurrentDate">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}ValidityInfo" style="display: none;">
+                                <div class="result-label">Validity Information:</div>
+                                <div class="result-value" id="${fieldId}Validity">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}ValidityPeriodInfo" style="display: none;">
+                                <div class="result-label">Validity Period:</div>
+                                <div class="result-value" id="${fieldId}ValidityPeriod">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}ValiditySourceInfo" style="display: none;">
+                                <div class="result-label">Validity Source:</div>
+                                <div class="result-value" id="${fieldId}ValiditySource">-</div>
+                            </div>
+                        `;
+                    } else if (isLicense) {
+                        dateFieldsHtml = `
+                            <div class="result-item" id="${fieldId}IssueDateInfo" style="display: none;">
+                                <div class="result-label">Issue Date:</div>
+                                <div class="result-value" id="${fieldId}IssueDate">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}ValidityNTInfo" style="display: none;">
+                                <div class="result-label">Validity (NT):</div>
+                                <div class="result-value" id="${fieldId}ValidityNT">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}ValidityTRInfo" style="display: none;">
+                                <div class="result-label">Validity (TR):</div>
+                                <div class="result-value" id="${fieldId}ValidityTR">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}ValidityEndInfo" style="display: none;">
+                                <div class="result-label">Validity End Date:</div>
+                                <div class="result-value" id="${fieldId}ValidityEnd">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}CurrentDateInfo" style="display: none;">
+                                <div class="result-label">Current Date:</div>
+                                <div class="result-value" id="${fieldId}CurrentDate">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}ValidityInfo" style="display: none;">
+                                <div class="result-label">Validity Information:</div>
+                                <div class="result-value" id="${fieldId}Validity">-</div>
+                            </div>
+                        `;
+                    }
+                }
+                
+                var acceptAttr = getAcceptForField(field.allowed_file_types);
+                var allowedLabel = (field.allowed_file_types && field.allowed_file_types.length) ? field.allowed_file_types.join(', ').toUpperCase() : 'PDF, JPG, JPEG, PNG, TIFF, WebP';
+                return `
+                    <div class="certificate-section" id="${fieldId}Section">
+                        <h2>${escapeHtml(field.field_name)} Upload ${field.mandatory ? '<span style="color: #dc3545; font-size: 0.7em;">(Required)</span>' : ''}</h2>
+                        <div class="upload-area" id="${fieldId}UploadArea">
+                            <p>Upload ${escapeHtml(field.field_name)} (${allowedLabel})</p>
+                            <div class="file-input-wrapper">
+                                <input type="file" id="${fieldId}FileInput" accept="${escapeHtml(acceptAttr)}" />
+                                <label for="${fieldId}FileInput" class="file-input-label">Choose File</label>
+                            </div>
+                            <div class="file-name" id="${fieldId}FileName"></div>
+                            <button class="verify-btn" id="${fieldId}VerifyBtn" disabled>Verify ${escapeHtml(field.field_name)}</button>
+                            <div class="loading" id="${fieldId}Loading">
+                                <div class="spinner"></div>
+                                <p style="margin-top: 8px; font-size: 0.9em;">Processing...</p>
+                            </div>
+                            <div class="error-message" id="${fieldId}Error"></div>
+                        </div>
+                        <div class="result-card" id="${fieldId}Result">
+                            <h3>Verification Result</h3>
+                            <div class="result-item">
+                                <div class="result-label">Expected Certificate:</div>
+                                <div class="result-value" id="${fieldId}Expected">${escapeHtml(field.expected_category)}</div>
+                            </div>
+                            <div class="result-item">
+                                <div class="result-label">Detected Certificate:</div>
+                                <div class="result-value" id="${fieldId}Detected">-</div>
+                            </div>
+                            <div class="result-item">
+                                <div class="result-label">Status:</div>
+                                <div class="result-value">
+                                    <span id="${fieldId}Status">-</span>
+                                </div>
+                            </div>
+                            ${dateFieldsHtml}
+                            <div class="result-item" id="${fieldId}Message"></div>
+                            <div class="result-item" id="${fieldId}Keywords" style="display: none;">
+                                <div class="result-label">Matched PRIMARY Keywords:</div>
+                                <div class="keywords-list" id="${fieldId}KeywordsList"></div>
+                            </div>
+                            <button class="view-text-btn" id="${fieldId}ViewTextBtn" onclick="toggleExtractedText('${fieldId}')">View Extracted Text</button>
+                            <div class="result-item extracted-text-container" id="${fieldId}TextContainer">
+                                <div class="result-label">Extracted Text:</div>
+                                <div class="result-value text-display" id="${fieldId}Text">-</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Build accept attribute and allowed extensions from field's allowed_file_types
+        var EXT_TO_MIME = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', tiff: 'image/tiff', tif: 'image/tiff', webp: 'image/webp' };
+        function getAcceptForField(allowed) {
+            if (!allowed || !allowed.length) return '.pdf,.jpg,.jpeg,.png,.tiff,.webp';
+            var exts = allowed.slice();
+            var mimes = [];
+            exts.forEach(function(e) {
+                var m = EXT_TO_MIME[e && e.toLowerCase()];
+                if (m && mimes.indexOf(m) === -1) mimes.push(m);
+            });
+            return (exts.map(function(e) { return '.' + e; }).join(',')) + (mimes.length ? ',' + mimes.join(',') : '');
+        }
+        function getAllowedExtensionsForSection(sectionId) {
+            var field = FIELDS_DATA.find(function(f) { return f.id === sectionId; });
+            var allowed = (field && field.allowed_file_types) ? field.allowed_file_types : ['pdf', 'jpg', 'jpeg', 'png', 'tiff', 'webp'];
+            return allowed.map(function(x) { return x.toLowerCase().replace(/^\./, ''); });
+        }
+        function isFileAllowed(file, sectionId) {
+            var name = (file && file.name) || '';
+            var ext = name.indexOf('.') >= 0 ? name.split('.').pop().toLowerCase() : '';
+            var allowed = getAllowedExtensionsForSection(sectionId);
+            if (ext === 'jpeg' && allowed.indexOf('jpg') >= 0) return true;
+            if (ext === 'jpg' && allowed.indexOf('jpeg') >= 0) return true;
+            return allowed.indexOf(ext) >= 0;
+        }
+
+        // Reassignment modal state
+        var reassignmentState = { sectionId: null, file: null, data: null };
+        var reassignmentModal = document.getElementById('reassignmentModal');
+        var reassignmentModalMessage = document.getElementById('reassignmentModalMessage');
+        var reassignmentCancelBtn = document.getElementById('reassignmentCancelBtn');
+        var reassignmentConfirmBtn = document.getElementById('reassignmentConfirmBtn');
+        var reassignmentToast = document.getElementById('reassignmentToast');
+
+        function showReassignmentModal(sectionId, file, data) {
+            var expected = data.expected_certificate;
+            var detected = data.detected_certificate;
+            reassignmentModalMessage.textContent =
+                'The uploaded document appears to be a ' + detected + ' instead of the required ' + expected + '. Do you want to upload it to the correct section automatically?';
+            reassignmentState.sectionId = sectionId;
+            reassignmentState.file = file;
+            reassignmentState.data = data;
+            reassignmentModal.classList.add('active');
+            reassignmentModal.setAttribute('aria-hidden', 'false');
+        }
+
+        function hideReassignmentModal() {
+            reassignmentModal.classList.remove('active');
+            reassignmentModal.setAttribute('aria-hidden', 'true');
+            reassignmentState.sectionId = null;
+            reassignmentState.file = null;
+            reassignmentState.data = null;
+        }
+
+        function clearSectionUpload(sectionId) {
+            var fileInput = document.getElementById(sectionId + 'FileInput');
+            var fileName = document.getElementById(sectionId + 'FileName');
+            var resultCard = document.getElementById(sectionId + 'Result');
+            var errorMsg = document.getElementById(sectionId + 'Error');
+            if (fileInput) fileInput.value = '';
+            if (fileName) fileName.textContent = '';
+            if (resultCard) resultCard.classList.remove('active');
+            if (errorMsg) { errorMsg.textContent = ''; errorMsg.classList.remove('active'); }
+            var verifyBtn = document.getElementById(sectionId + 'VerifyBtn');
+            if (verifyBtn) verifyBtn.disabled = true;
+        }
+
+        function showReassignmentToast(correctCategory) {
+            reassignmentToast.textContent = 'Document uploaded successfully under ' + correctCategory + '.';
+            reassignmentToast.classList.add('active');
+            setTimeout(function() { reassignmentToast.classList.remove('active'); }, 4000);
+        }
+
+        reassignmentCancelBtn.addEventListener('click', function() {
+            hideReassignmentModal();
+        });
+
+        reassignmentConfirmBtn.addEventListener('click', function() {
+            var sectionId = reassignmentState.sectionId;
+            var file = reassignmentState.file;
+            var data = reassignmentState.data;
+            if (!sectionId || !file || !data) {
+                hideReassignmentModal();
+                return;
+            }
+            var detected = data.detected_certificate;
+            var expected = data.expected_certificate;
+            var correctSectionId = getSectionIdForCertificateType(detected);
+            if (!correctSectionId) {
+                hideReassignmentModal();
+                return;
+            }
+            hideReassignmentModal();
+            clearSectionUpload(sectionId);
+            reassignmentConfirmBtn.disabled = true;
+            var formData = new FormData();
+            formData.append('file', file);
+            formData.append('expected_certificate', detected);
+            formData.append('reassignment_from', expected);
+            fetch('/upload', { method: 'POST', body: formData })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    reassignmentConfirmBtn.disabled = false;
+                    if (res.error) {
+                        showError(correctSectionId, res.error);
+                        return;
+                    }
+                    displayResults(correctSectionId, res);
+                    showReassignmentToast(detected);
+                    var correctSection = document.getElementById(correctSectionId + 'Section');
+                    if (correctSection) correctSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                })
+                .catch(function(err) {
+                    reassignmentConfirmBtn.disabled = false;
+                    showError(correctSectionId, 'Re-upload failed: ' + err.message);
+                });
+        });
 
         // Initialize all certificate sections
         function initializeSection(sectionId, expectedType) {
@@ -733,14 +808,15 @@
                 uploadArea.classList.remove('dragover');
                 
                 const file = e.dataTransfer.files[0];
-                if (file && (file.type === 'image/jpeg' || file.type === 'image/jpg' || file.type === 'image/png')) {
+                if (file && isFileAllowed(file, sectionId)) {
                     fileInput.files = e.dataTransfer.files;
                     fileName.textContent = `Selected: ${file.name}`;
                     verifyBtn.disabled = false;
                     errorMsg.classList.remove('active');
                     resultCard.classList.remove('active');
                 } else {
-                    showError(sectionId, 'Please upload a valid image file (JPG, JPEG, or PNG)');
+                    var allowed = getAllowedExtensionsForSection(sectionId).join(', ');
+                    showError(sectionId, 'Unsupported file format. Allowed: ' + allowed);
                 }
             });
 
@@ -749,6 +825,11 @@
                 const file = fileInput.files[0];
                 if (!file) {
                     showError(sectionId, 'Please select a file first');
+                    return;
+                }
+                if (!isFileAllowed(file, sectionId)) {
+                    var allowed = getAllowedExtensionsForSection(sectionId).join(', ');
+                    showError(sectionId, 'Unsupported file format. Allowed: ' + allowed);
                     return;
                 }
 
@@ -762,6 +843,7 @@
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('expected_certificate', expectedType);
+                formData.append('field_id', sectionId);
 
                 // Send request
                 fetch('/upload', {
@@ -775,6 +857,12 @@
 
                     if (data.error) {
                         showError(sectionId, data.error);
+                        return;
+                    }
+
+                    // Smart reassignment: wrong field -> show modal instead of rejecting
+                    if (data.category_mismatch) {
+                        showReassignmentModal(sectionId, file, data);
                         return;
                     }
 
@@ -998,14 +1086,16 @@
             return 'warning';
         }
 
-        // Initialize all certificate sections
-        // Each section is independently validated against its expected certificate type
-        initializeSection('aadhaar', CERTIFICATE_TYPES.aadhaar);
-        initializeSection('community', CERTIFICATE_TYPES.community);
-        initializeSection('income', CERTIFICATE_TYPES.income);
-        initializeSection('educational', CERTIFICATE_TYPES.educational);
-        initializeSection('bonafide', CERTIFICATE_TYPES.bonafide);
-        initializeSection('license', CERTIFICATE_TYPES.license);
+        // Initialize all certificate sections dynamically
+        function initializeAllSections(fields) {
+            fields.forEach(function(field) {
+                initializeSection(field.id, field.expected_category);
+            });
+        }
+
+        // Load fields on page load
+        loadAndRenderFields();
     </script>
 </body>
 </html>
+
