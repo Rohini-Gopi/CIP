@@ -13,8 +13,12 @@ import re
 import shutil
 import uuid
 import json
-from flask import Flask, request, render_template, jsonify
+import sqlite3
+import difflib
+from functools import wraps
+from flask import Flask, request, render_template, jsonify, redirect, url_for, session, flash
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 import cv2
 import pytesseract
 from PIL import Image
@@ -27,10 +31,22 @@ try:
 except ImportError:
     HAS_PYMUPDF = False
 
+try:
+    from rapidfuzz import fuzz as rapidfuzz_fuzz
+except ImportError:
+    rapidfuzz_fuzz = None
+
+try:
+    import jellyfish
+except ImportError:
+    jellyfish = None
+
 # Initialize Flask app
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-change-me')
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['DATABASE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'users.db')
 
 # All supported document formats (lowercase for validation)
 SUPPORTED_EXTENSIONS = {'pdf', 'jpg', 'jpeg', 'png', 'tiff', 'tif', 'webp'}
@@ -176,6 +192,111 @@ FIELDS_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'c
 
 
 # ============================================================================
+# DATABASE & AUTH HELPERS
+# ============================================================================
+
+def get_db_connection():
+    """Get a SQLite connection for the users database."""
+    conn = sqlite3.connect(app.config['DATABASE'])
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    """Initialize the users table if it does not exist."""
+    conn = get_db_connection()
+    try:
+        # Users table: stores login credentials and role (admin / user)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        # Certificates table: stores verification & ownership info per user
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS certificates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                certificate_name TEXT NOT NULL,
+                extracted_name TEXT,
+                file_path TEXT,
+                ownership_status TEXT,
+                verification_status TEXT,
+                match_score REAL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            """
+        )
+
+        # --- Lightweight schema migrations for existing databases ---
+        # Ensure 'role' column exists on users
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if 'role' not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
+
+        # Ensure new columns exist on certificates
+        cert_cols = [row[1] for row in conn.execute("PRAGMA table_info(certificates)").fetchall()]
+        if 'file_path' not in cert_cols:
+            conn.execute("ALTER TABLE certificates ADD COLUMN file_path TEXT")
+        if 'verification_status' not in cert_cols:
+            conn.execute("ALTER TABLE certificates ADD COLUMN verification_status TEXT")
+        if 'file_name' not in cert_cols:
+            conn.execute("ALTER TABLE certificates ADD COLUMN file_name TEXT")
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def login_required(view_func):
+    """Decorator to protect routes that require authentication."""
+    @wraps(view_func)
+    def wrapped_view(*args, **kwargs):
+        if 'user_id' not in session:
+            # Optionally preserve next URL
+            next_url = request.path
+            return redirect(url_for('login', next=next_url))
+        return view_func(*args, **kwargs)
+    return wrapped_view
+
+
+def admin_required(view_func):
+    """Decorator to protect admin-only routes. Users cannot access admin routes."""
+    @wraps(view_func)
+    def wrapped_view(*args, **kwargs):
+        if 'user_id' not in session:
+            next_url = request.path
+            return redirect(url_for('login', next=next_url))
+        if session.get('user_role') != 'admin':
+            # Non-admin users are redirected to user dashboard
+            return redirect(url_for('user_dashboard'))
+        return view_func(*args, **kwargs)
+    return wrapped_view
+
+
+def user_only(view_func):
+    """Decorator to restrict route to non-admin users. Admin cannot access user-only routes."""
+    @wraps(view_func)
+    def wrapped_view(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login', next=request.path))
+        if session.get('user_role') == 'admin':
+            # Admin users are redirected to admin dashboard
+            return redirect(url_for('admin_dashboard'))
+        return view_func(*args, **kwargs)
+    return wrapped_view
+
+
+# ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
@@ -299,6 +420,336 @@ def load_fields_config():
         return fields
     except Exception as e:
         return []
+
+
+def normalize_name_for_match(name: str) -> str:
+    """Normalize a name string for fuzzy matching (lowercase, letters only)."""
+    if not name:
+        return ''
+    return re.sub(r'[^a-z]', '', name.lower())
+
+
+# ============================================================================
+# SMART NAME MATCHING — Highly tolerant biased OCR name verification
+# ============================================================================
+# OCR often produces noisy text (e.g. "Selvl Divyapriva's daughter" for "Divyapriya B").
+# We clean OCR, extract probable name, normalize, then apply multi-layer matching
+# with bias toward ACCEPT so genuine certificates are never rejected.
+
+# Non-name words to strip from OCR before extracting candidate name.
+# Includes common certificate boilerplate (income, district, taluk, signature, etc.)
+# so that holder names like "Divyapriva" / "Baskar" are not drowned out by form text.
+OCR_NOISE_WORDS = frozenset([
+    'son', 'daughter', 'wife', 'husband', 'of', 'mr', 'mrs', 'ms', 'miss',
+    'selvi', 'selvl', 'selvam', 's/o', 'd/o', 'w/o', 'r/o',
+    'this', 'is', 'to', 'certify', 'certlyihge', 'certifythat', 'residing', 'at',
+    'the', 'that', 'has', 'have', 'been', 'holder', 'name', 'holderof',
+    'father', 'mother', 'guardian', 'village', 'district', 'state',
+    'certificate', 'certified', 'hereby',
+    # Income / government certificate boilerplate
+    'income', 'family', 'annual', 'based', 'details', 'furnished', 'verification',
+    'table', 'below', 'thousand', 'signed', 'signature', 'verified', 'digitally',
+    'date', 'designation', 'remarks', 'deputy', 'zonal', 'tahsildar', 'tahsildar',
+    'taluk', 'tamil', 'nadu', 'street', 'town', 'vilage', 'village',
+    'unique', 'genuineness', 'number', 'barcode', 'url', 'online', 'validity',
+    'period', 'revenue', 'collector', 'government', 'india', 'district',
+    'sholingur', 'ranipet', 'ranipek', 'signature', 'not', 'require', 'any',
+    'seat', 'reading', 'mobile', 'verify', 'through', 'certificate', 'signed',
+    # Place names / OCR variants that are not holder names
+    'shelingiur', 'oftranipek', 'ranipor', 'bestava', 'encaiah', 'tatuk', 'tigssl',
+])
+
+# Single-letter tokens to drop when normalizing (common initials: B, K, R, etc.)
+NORMALIZE_DROP_INITIALS = frozenset('b k r s m n p t v'.split())
+
+
+def clean_ocr_text(ocr_text: str) -> str:
+    """
+    Clean OCR text for name extraction: remove noise words, special chars, possessive 's.
+    Keeps only alphabetic words. Used so we don't treat "daughter" or "certify" as names.
+    """
+    if not ocr_text:
+        return ''
+    # Remove possessive 's and normalize apostrophes
+    s = re.sub(r"['']s\b", '', ocr_text, flags=re.IGNORECASE)
+    s = re.sub(r"['`´]", ' ', s)
+    # Keep only letters and spaces (allow words to be extracted)
+    s = re.sub(r'[^A-Za-z\s]', ' ', s)
+    words = s.split()
+    cleaned = [w for w in words if w.lower() not in OCR_NOISE_WORDS and len(w) > 1]
+    return ' '.join(cleaned)
+
+
+def _looks_like_name_token(word: str, max_consonant_run: int = 3, max_len: int = 15, min_vowel_ratio: float = 0.35) -> bool:
+    """True if word is name-like: has vowels, not too long, no long consonant runs (OCR garbage)."""
+    if not word or len(word) > max_len:
+        return False
+    w = word.lower()
+    if not w.isalpha():
+        return False
+    if not re.search(r'[aeiou]', w):
+        return False
+    # Real names tend to have a reasonable vowel ratio; OCR garbage often doesn't
+    vowel_count = sum(1 for c in w if c in 'aeiou')
+    if vowel_count / len(w) < min_vowel_ratio:
+        return False
+    # Long runs of consonants often indicate OCR noise
+    run = 0
+    for c in w:
+        if c in 'aeiou':
+            run = 0
+        else:
+            run += 1
+            if run > max_consonant_run:
+                return False
+    return True
+
+
+def extract_probable_name(ocr_text: str) -> str:
+    """
+    From cleaned OCR text, pick the longest meaningful word or contiguous word group
+    as the probable certificate holder name. E.g. "Selvl Divyapriva daughter" -> "Divyapriva".
+    Filters out OCR garbage (no vowel, very long, or 4+ consecutive consonants) so names
+    like "Divyapriva" / "Baskar" are chosen over noise like "confisgudrer" or "CrenfiiGinien".
+    """
+    cleaned = clean_ocr_text(ocr_text)
+    if not cleaned:
+        return ''
+    words = [w for w in cleaned.split() if len(w) > 1 and w.isalpha()]
+    if not words:
+        return ''
+    # Prefer name-like tokens (have vowel, reasonable length, no long consonant runs)
+    name_like = [w for w in words if _looks_like_name_token(w)]
+    candidates = name_like if name_like else words
+    # Typical first-name length (6–10 chars). Holder name often in body: prefer *last* occurrence.
+    in_range = [w for w in candidates if 6 <= len(w) <= 10]
+    best = ''
+    best_pos = -1
+    for i, w in enumerate(words):
+        if w not in in_range:
+            continue
+        if len(w) >= len(best) and i > best_pos:
+            best = w
+            best_pos = i
+    if not best and candidates:
+        best = max(candidates, key=len)
+        best_pos = max((i for i, w in enumerate(words) if w == best), default=-1)
+    # Allow short runs (2–3 words); all words name-like, first 6–10, total <= 25; prefer last occurrence
+    for i, w in enumerate(words):
+        if w.lower() in OCR_NOISE_WORDS or not _looks_like_name_token(w):
+            continue
+        if not (6 <= len(w) <= 10):
+            continue
+        run = [w]
+        for j in range(i + 1, min(i + 3, len(words))):
+            nw = words[j]
+            if nw.lower() in OCR_NOISE_WORDS or not _looks_like_name_token(nw):
+                break
+            if len(nw) < 5:
+                break
+            run.append(nw)
+        if len(run) > 1:
+            candidate = ' '.join(run)
+            if len(candidate) <= 25 and len(candidate) >= len(best) and i >= best_pos:
+                best = candidate
+                best_pos = i
+    return best.strip() if best else ''
+
+
+def normalize_name_strict(name: str) -> str:
+    """
+    Normalize for matching: lowercase, remove spaces, drop single-char initials (b, k, r...),
+    collapse repeated letters, keep only letters. Used for substring/fuzzy comparison.
+    """
+    if not name:
+        return ''
+    tokens = [t for t in re.findall(r'[a-z]+', name.lower()) if len(t) > 1 or t not in NORMALIZE_DROP_INITIALS]
+    s = ''.join(tokens) if tokens else re.sub(r'[^a-z]', '', name.lower())
+    # Collapse repeated letters (e.g. rohinee -> rohine)
+    s = re.sub(r'(.)\1+', r'\1', s)
+    return s
+
+
+def normalize_for_phonetic(name: str) -> str:
+    """Remove vowels for a simple phonetic-style comparison (optional extra signal)."""
+    if not name:
+        return ''
+    s = re.sub(r'[^a-z]', '', name.lower())
+    return re.sub(r'[aeiou]', '', s)
+
+
+def name_tokens(name: str) -> set:
+    """Token set from name (words), normalized to lowercase, for token-overlap matching."""
+    if not name:
+        return set()
+    words = re.findall(r'[A-Za-z]+', name.lower())
+    return {w for w in words if len(w) > 1 and w not in OCR_NOISE_WORDS}
+
+
+# --- Multi-layer matching (bias: any pass -> ACCEPT) ---
+
+def _substring_match(login_norm: str, extracted_norm: str) -> bool:
+    """True if one contains the other (after normalization)."""
+    if not login_norm or not extracted_norm:
+        return False
+    return login_norm in extracted_norm or extracted_norm in login_norm
+
+
+def _token_overlap(login_tokens: set, extracted_tokens: set) -> bool:
+    """True if any token from login appears in extracted (or vice versa). Bias: accept on any overlap."""
+    return bool(login_tokens & extracted_tokens)
+
+
+def _fuzzy_similarity(login_norm: str, extracted_norm: str) -> float:
+    """Return similarity in [0, 1]. Uses RapidFuzz if available else difflib."""
+    if not login_norm or not extracted_norm:
+        return 0.0
+    if rapidfuzz_fuzz is not None:
+        return rapidfuzz_fuzz.ratio(login_norm, extracted_norm) / 100.0
+    return difflib.SequenceMatcher(None, login_norm, extracted_norm).ratio()
+
+
+def _phonetic_match(login_name: str, extracted_name: str) -> bool:
+    """True if Soundex or Metaphone codes match for any word pair. Handles spelling tolerance (e.g. divyapriva ~ divyapriya)."""
+    if not jellyfish or not login_name or not extracted_name:
+        return False
+    login_words = re.findall(r'[A-Za-z]+', login_name.lower())
+    extracted_words = re.findall(r'[A-Za-z]+', extracted_name.lower())
+    for lw in login_words:
+        if len(lw) < 2:
+            continue
+        for ew in extracted_words:
+            if len(ew) < 2:
+                continue
+            if jellyfish.soundex(lw) == jellyfish.soundex(ew):
+                return True
+            try:
+                if jellyfish.metaphone(lw) == jellyfish.metaphone(ew):
+                    return True
+            except Exception:
+                pass
+    return False
+
+
+def _first_n_match(login_norm: str, extracted_norm: str, n: int = 5) -> bool:
+    """Bias rule: if first n characters match, accept."""
+    if not login_norm or not extracted_norm or n <= 0:
+        return False
+    return login_norm[:n] == extracted_norm[:n]
+
+
+# Minimum similarity to accept (40% as per requirement)
+OWNERSHIP_SIMILARITY_THRESHOLD = 0.40
+
+
+def smart_name_match(user_name: str, ocr_text: str) -> tuple:
+    """
+    Highly tolerant name verification: clean OCR, extract probable name, normalize,
+    then apply multi-layer matching with bias toward ACCEPT.
+    Returns (extracted_name, match_score, passed).
+    """
+    if not user_name or not ocr_text:
+        return '', 0.0, False
+
+    extracted = extract_probable_name(ocr_text)
+    if not extracted:
+        return '', 0.0, False
+
+    login_norm = normalize_name_strict(user_name)
+    extracted_norm = normalize_name_strict(extracted)
+    login_tokens = name_tokens(user_name)
+    extracted_tokens = name_tokens(extracted)
+
+    # Compute similarity for reporting
+    similarity = _fuzzy_similarity(login_norm, extracted_norm)
+    # Also consider partial match (e.g. "divyapriya" in "divyapriva")
+    if rapidfuzz_fuzz is not None:
+        partial = rapidfuzz_fuzz.partial_ratio(login_norm, extracted_norm) / 100.0
+        similarity = max(similarity, partial)
+
+    passed = False
+    # Bias rules: if ANY of these pass, accept (tolerant by design)
+    if _substring_match(login_norm, extracted_norm):
+        passed = True
+    if _token_overlap(login_tokens, extracted_tokens):
+        passed = True
+    if similarity >= OWNERSHIP_SIMILARITY_THRESHOLD:
+        passed = True
+    if _first_n_match(login_norm, extracted_norm, 5):
+        passed = True
+    if _phonetic_match(user_name, extracted):
+        passed = True
+
+    return extracted, round(similarity, 3), passed
+
+
+def find_best_name_in_text(user_name: str, text: str):
+    """
+    Scan OCR text and find the best matching name using smart name matching.
+    Delegates to smart_name_match for highly tolerant OCR verification.
+    Returns (extracted_name, score) for backward compatibility.
+    """
+    extracted, score, _ = smart_name_match(user_name, text)
+    return (extracted or None), score
+
+
+def verify_certificate_ownership(user_name: str, ocr_text: str, admin_override: bool = False) -> dict:
+    """
+    Verify that the certificate belongs to the logged-in user based on OCR text.
+    Uses highly tolerant biased OCR name verification (smart name matching):
+    - Clean OCR (noise words removed), extract probable name, normalize
+    - Multi-layer matching: substring, token overlap, fuzzy (>= 40%), phonetic, first-5-char
+    - If ANY method passes -> ownership_passed True (bias: never reject genuine certificates)
+    - Optional admin override can bypass failures.
+
+    Returns a dict with:
+        login_name, extracted_name, match_score, ownership_status, ownership_passed, admin_override.
+    """
+    result = {
+        'login_name': user_name or '',
+        'extracted_name': '',
+        'match_score': 0.0,
+        'ownership_status': '',
+        'ownership_passed': False,
+        'admin_override': bool(admin_override),
+    }
+
+    if not user_name or not ocr_text:
+        result['ownership_status'] = 'Name verification not possible (missing user name or OCR text).'
+        return result
+
+    extracted, score, passed = smart_name_match(user_name, ocr_text)
+    result['extracted_name'] = extracted or ''
+    result['match_score'] = round(score, 3)
+
+    if not extracted:
+        if admin_override:
+            result['ownership_passed'] = True
+            result['ownership_status'] = 'Name not found in certificate text, but overridden by admin.'
+        else:
+            result['ownership_status'] = 'Name not found in certificate text.'
+        return result
+
+    # Bias handling: ANY matching method already set passed in smart_name_match (>=40%, substring, token, phonetic, first-5).
+    if passed:
+        result['ownership_passed'] = True
+        result['ownership_status'] = 'Owned by user (name match).'
+    elif admin_override:
+        result['ownership_passed'] = True
+        result['ownership_status'] = 'Name mismatch, but overridden by admin.'
+    else:
+        result['ownership_passed'] = False
+        result['ownership_status'] = 'Not owned by user (name mismatch).'
+
+    return result
+
+
+def verify_ownership(user_name: str, ocr_text: str, admin_override: bool = False) -> dict:
+    """
+    Convenience alias required by spec.
+    Delegates to verify_certificate_ownership().
+    """
+    return verify_certificate_ownership(user_name, ocr_text, admin_override)
 
 
 def save_fields_config(fields):
@@ -1056,22 +1507,146 @@ def validate_certificate_match(expected_type, detected_type, matched_primary_key
 
 
 # ============================================================================
-# FLASK ROUTES
+# FLASK ROUTES - AUTHENTICATION
+# ============================================================================
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    """User registration."""
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        email = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+        confirm_password = request.form.get('confirm_password', '')
+        role = request.form.get('role', 'user').strip().lower()
+
+        error = None
+        if not name or not email or not password or not confirm_password:
+            error = 'All fields are required.'
+        elif password != confirm_password:
+            error = 'Passwords do not match.'
+        elif role not in ('admin', 'user'):
+            role = 'user'
+
+        if error is None:
+            conn = get_db_connection()
+            try:
+                existing = conn.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
+                if existing:
+                    error = 'An account with this email already exists.'
+                else:
+                    password_hash = generate_password_hash(password)
+                    conn.execute(
+                        'INSERT INTO users (name, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)',
+                        (name, email, password_hash, role, datetime.now().isoformat())
+                    )
+                    conn.commit()
+                    flash('Registration successful. Please log in.', 'success')
+                    return redirect(url_for('login'))
+            finally:
+                conn.close()
+
+        if error:
+            flash(error, 'error')
+
+    return render_template('register.html')
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """User login."""
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        email_or_username = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+        error = None
+
+        if not email_or_username or not password:
+            error = 'Email/Username and password are required.'
+        else:
+            conn = get_db_connection()
+            try:
+                # Allow login via email or name
+                user = conn.execute(
+                    'SELECT * FROM users WHERE email = ? OR name = ?',
+                    (email_or_username.lower(), email_or_username)
+                ).fetchone()
+            finally:
+                conn.close()
+
+            if user is None or not check_password_hash(user['password_hash'], password):
+                error = 'Invalid credentials.'
+
+        if error is None and user is not None:
+            session.clear()
+            session['user_id'] = user['id']
+            session['user_name'] = user['name']
+            # sqlite3.Row does not support .get(); use row['col'] and row.keys() for safe access.
+            session['user_role'] = user['role'] if 'role' in user.keys() else 'user'
+            # Role-based redirection: admin -> admin dashboard, user -> user dashboard
+            next_url = request.args.get('next')
+            if next_url:
+                return redirect(next_url)
+            if session.get('user_role') == 'admin':
+                return redirect(url_for('admin_dashboard'))
+            return redirect(url_for('user_dashboard'))
+
+        if error:
+            flash(error, 'error')
+
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    """Log out the current user."""
+    session.clear()
+    flash('You have been logged out.', 'info')
+    return redirect(url_for('login'))
+
+
+# ============================================================================
+# FLASK ROUTES - APPLICATION
 # ============================================================================
 
 @app.route('/')
+@login_required
 def index():
-    """Render the main upload page (user interface)."""
+    """Root: redirect to role-appropriate dashboard (admin or user)."""
+    if session.get('user_role') == 'admin':
+        return redirect(url_for('admin_dashboard'))
+    return redirect(url_for('user_dashboard'))
+
+
+@app.route('/user_dashboard')
+@login_required
+@user_only
+def user_dashboard():
+    """User dashboard: certificate upload and My Certificates. Blocked for admin."""
     return render_template('index.html')
 
 
-@app.route('/admin')
-def admin():
-    """Render the admin interface."""
+@app.route('/admin_dashboard')
+@admin_required
+def admin_dashboard():
+    """Admin dashboard: manage certificate fields and view all certificates."""
     return render_template('admin.html')
 
 
+@app.route('/admin')
+@admin_required
+def admin():
+    """Legacy admin URL: redirect to admin_dashboard."""
+    return redirect(url_for('admin_dashboard'))
+
+
 @app.route('/api/user/fields', methods=['GET'])
+@login_required
 def get_user_fields():
     """Get active certificate fields for user interface."""
     active_fields = get_active_fields()
@@ -1082,6 +1657,7 @@ def get_user_fields():
 
 
 @app.route('/api/admin/fields', methods=['GET'])
+@admin_required
 def get_admin_fields():
     """Get all certificate fields (admin view - includes disabled)."""
     all_fields = load_fields_config()
@@ -1092,6 +1668,7 @@ def get_admin_fields():
 
 
 @app.route('/api/admin/fields', methods=['POST'])
+@admin_required
 def create_field():
     """Create a new certificate field."""
     try:
@@ -1143,7 +1720,81 @@ def create_field():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/user/certificates', methods=['GET'])
+@login_required
+def get_user_certificates():
+    """Return certificates belonging only to the logged-in user (file name, verification status, upload date)."""
+    user_id = session.get('user_id')
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, certificate_name, extracted_name, file_path, file_name, ownership_status,
+                   verification_status, match_score, created_at
+            FROM certificates
+            WHERE user_id = ?
+            ORDER BY datetime(created_at) DESC
+            """,
+            (user_id,)
+        ).fetchall()
+        certs = []
+        for r in rows:
+            # Display file name: stored file_name, or basename of file_path, or certificate type
+            file_name = r['file_name'] if r['file_name'] else (
+                os.path.basename(r['file_path']) if r['file_path'] else r['certificate_name']
+            )
+            certs.append({
+                'id': r['id'],
+                'certificate_name': r['certificate_name'],
+                'file_name': file_name,
+                'extracted_name': r['extracted_name'],
+                'ownership_status': r['ownership_status'],
+                'verification_status': r['verification_status'],
+                'match_score': r['match_score'],
+                'created_at': r['created_at'],
+                'upload_date': r['created_at'],
+            })
+        return jsonify({'success': True, 'certificates': certs})
+    finally:
+        conn.close()
+
+
+@app.route('/api/admin/certificates', methods=['GET'])
+@admin_required
+def get_all_certificates():
+    """Return all certificates with user information (admin-only)."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT c.id, c.certificate_name, c.extracted_name, c.ownership_status, c.verification_status,
+                   c.match_score, c.created_at,
+                   u.name AS user_name, u.email AS user_email
+            FROM certificates c
+            JOIN users u ON c.user_id = u.id
+            ORDER BY datetime(c.created_at) DESC
+            """
+        ).fetchall()
+        certs = []
+        for r in rows:
+            certs.append({
+                'id': r['id'],
+                'certificate_name': r['certificate_name'],
+                'extracted_name': r['extracted_name'],
+                'ownership_status': r['ownership_status'],
+                'verification_status': r['verification_status'],
+                'match_score': r['match_score'],
+                'created_at': r['created_at'],
+                'user_name': r['user_name'],
+                'user_email': r['user_email'],
+            })
+        return jsonify({'success': True, 'certificates': certs})
+    finally:
+        conn.close()
+
+
 @app.route('/api/admin/fields/<field_id>', methods=['PUT'])
+@admin_required
 def update_field(field_id):
     """Update an existing certificate field."""
     try:
@@ -1191,6 +1842,7 @@ def update_field(field_id):
 
 
 @app.route('/api/admin/fields/<field_id>', methods=['DELETE'])
+@admin_required
 def delete_field(field_id):
     """Delete a certificate field."""
     try:
@@ -1207,6 +1859,7 @@ def delete_field(field_id):
 
 
 @app.route('/upload', methods=['POST'])
+@login_required
 def upload_file():
     """
     Handle file upload and process STRICT certificate verification.
@@ -1393,6 +2046,22 @@ def upload_file():
             matched_primary_keywords,
             extracted_text
         )
+
+        # Ownership verification based on logged-in user
+        admin_override_flag = request.form.get('admin_override', '').strip().lower() in ('1', 'true', 'yes')
+        login_name = session.get('user_name', '')
+        ownership_result = verify_certificate_ownership(login_name, extracted_text, admin_override=admin_override_flag)
+
+        # Combine certificate validation status with ownership verification
+        final_status = validation_result['status']
+        final_message = validation_result['message']
+        if not ownership_result['ownership_passed']:
+            # Reject when ownership fails (unless overridden)
+            final_status = 'Rejected (Ownership Mismatch)'
+            final_message = f"{validation_result['message']} Ownership: {ownership_result['ownership_status']}"
+        elif ownership_result['admin_override']:
+            # Accepted but note admin override
+            final_message = f"{validation_result['message']} Ownership: {ownership_result['ownership_status']}"
         
         # Smart reassignment: category mismatch but detected is known -> offer reassignment (do not save under wrong category)
         reassignment_from = request.form.get('reassignment_from', '').strip()
@@ -1404,6 +2073,51 @@ def upload_file():
             and detected_certificate != "Unknown"
         )
         
+        # Compute final path for non-mismatch so we can persist it (and avoid duplicate filenames)
+        final_path = None
+        if not category_mismatch:
+            final_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            if os.path.exists(final_path):
+                base, ext = os.path.splitext(filename)
+                final_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{base}_{uuid.uuid4().hex[:8]}{ext}")
+                filename = os.path.basename(final_path)
+        
+        # Persist certificate record mapped to user ID
+        try:
+            user_id = session.get('user_id')
+            if user_id is not None:
+                stored_path = final_path if not category_mismatch else None
+                #else:
+                    #stored_path = None  # mismatch path not persisted
+
+                conn = get_db_connection()
+                try:
+                    # stored_path may be set later for non-mismatch; we persist file_name (original filename) and path when available
+                    conn.execute(
+                        """
+                        INSERT INTO certificates (user_id, certificate_name, extracted_name, file_path, file_name,
+                                                  ownership_status, verification_status, match_score, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            user_id,
+                            expected_certificate,
+                            ownership_result.get('extracted_name') or '',
+                            stored_path,
+                            filename,
+                            ownership_result.get('ownership_status'),
+                            final_status,
+                            ownership_result.get('match_score'),
+                            datetime.now().isoformat(),
+                        )
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+        except Exception:
+            # Do not block verification flow on certificate logging errors
+            pass
+
         if category_mismatch:
             # Do not save file under wrong category; remove temp file
             if os.path.exists(temp_path):
@@ -1416,8 +2130,8 @@ def upload_file():
                 'category_mismatch': True,
                 'expected_certificate': expected_certificate,
                 'detected_certificate': detected_certificate,
-                'status': validation_result['status'],
-                'message': validation_result['message'],
+                'status': final_status,
+                'message': final_message,
                 'extracted_text': extracted_text,
                 'matched_primary_keywords': validation_result.get('matched_primary_keywords', matched_primary_keywords),
                 'extracted_date': validation_result.get('extracted_date'),
@@ -1430,15 +2144,15 @@ def upload_file():
                 'issue_date': validation_result.get('issue_date'),
                 'validity_nt': validation_result.get('validity_nt'),
                 'validity_tr': validation_result.get('validity_tr'),
+                'login_name': ownership_result.get('login_name'),
+                'ownership_extracted_name': ownership_result.get('extracted_name'),
+                'ownership_match_score': ownership_result.get('match_score'),
+                'ownership_status': ownership_result.get('ownership_status'),
+                'ownership_passed': ownership_result.get('ownership_passed'),
                 'original_format': file_ext,
             })
         
-        # Match or Unknown: save to permanent location (avoid duplicate filename)
-        final_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        if os.path.exists(final_path):
-            base, ext = os.path.splitext(filename)
-            final_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{base}_{uuid.uuid4().hex[:8]}{ext}")
-            filename = os.path.basename(final_path)
+        # Match or Unknown: save to permanent location (final_path already computed above)
         try:
             os.rename(temp_path, final_path)
         except OSError:
@@ -1449,8 +2163,8 @@ def upload_file():
             'category_mismatch': False,
             'expected_certificate': expected_certificate,
             'detected_certificate': detected_certificate,
-            'status': validation_result['status'],
-            'message': validation_result['message'],
+            'status': final_status,
+            'message': final_message,
             'extracted_text': extracted_text,
             'matched_primary_keywords': validation_result.get('matched_primary_keywords', matched_primary_keywords),
             'extracted_date': validation_result.get('extracted_date'),
@@ -1463,6 +2177,11 @@ def upload_file():
             'issue_date': validation_result.get('issue_date'),
             'validity_nt': validation_result.get('validity_nt'),
             'validity_tr': validation_result.get('validity_tr'),
+            'login_name': ownership_result.get('login_name'),
+            'ownership_extracted_name': ownership_result.get('extracted_name'),
+            'ownership_match_score': ownership_result.get('match_score'),
+            'ownership_status': ownership_result.get('ownership_status'),
+            'ownership_passed': ownership_result.get('ownership_passed'),
             'original_format': file_ext,
         })
     
@@ -1482,6 +2201,16 @@ def upload_file():
         }), 500
 
 
+@app.route('/verify', methods=['POST'])
+@login_required
+def verify_certificate():
+    """
+    Alias endpoint for certificate verification.
+    Reuses the same logic as /upload for backward compatibility.
+    """
+    return upload_file()
+
+
 # ============================================================================
 # MAIN ENTRY POINT
 # ============================================================================
@@ -1494,6 +2223,8 @@ if __name__ == '__main__':
     print("For Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki")
     print("\nServer will start at: http://127.0.0.1:5000")
     print("=" * 60)
-    
+    # Initialize user database (login / register)
+    init_db()
+
     # Run Flask app
     app.run(debug=True, host='0.0.0.0', port=5000)

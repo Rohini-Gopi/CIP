@@ -44,6 +44,37 @@
             opacity: 0.9;
         }
 
+        .header .user-info {
+            margin-top: 8px;
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .header-actions {
+            margin-top: 12px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .header-actions a, .header-actions .btn-header {
+            color: white;
+            text-decoration: none;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.25);
+            border-radius: 6px;
+            font-size: 0.9em;
+            transition: background 0.2s;
+            border: none;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .header-actions a:hover, .header-actions .btn-header:hover {
+            background: rgba(255, 255, 255, 0.4);
+        }
+
         .content {
             padding: 40px;
         }
@@ -440,6 +471,10 @@
         <div class="header">
             <h1>📜 Certificate Verification System</h1>
             <p>Strict Validation - Rule-Based OCR Certificate Classification</p>
+            <p class="user-info">Logged in as: {{ session.get('user_name', 'Unknown User') }}</p>
+            <div class="header-actions">
+                <a href="{{ url_for('logout') }}">Logout</a>
+            </div>
         </div>
 
         <div class="content">
@@ -452,9 +487,6 @@
                 <p><strong>• Supported formats:</strong> PDF, JPEG, PNG, TIFF, WebP (per-field allowed types are set by admin)</p>
             </div>
 
-            <div style="text-align: center; margin-bottom: 20px;">
-                <a href="/admin" style="color: #667eea; text-decoration: none; padding: 8px 16px; background: rgba(102, 126, 234, 0.1); border-radius: 5px; display: inline-block;">Admin Panel</a>
-            </div>
 
             <div class="loading" id="pageLoading" style="text-align: center; padding: 40px;">
                 <div class="spinner"></div>
@@ -462,6 +494,31 @@
             </div>
 
             <div id="fieldsContainer"></div>
+
+            <div style="margin-top: 40px;">
+                <h2 style="color:#333; margin-bottom: 10px;">My Certificates</h2>
+                <p style="font-size:0.9rem; color:#666; margin-bottom:10px;">History of your uploaded certificates. Click "Update Changes" to save and refresh the list.</p>
+                <div class="table-wrapper">
+                    <table id="userCertsTable" style="width:100%; border-collapse:collapse; font-size:0.9rem;">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid #e0e0e0;">File name</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid #e0e0e0;">Verification status</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid #e0e0e0;">Upload date</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid #e0e0e0;">Certificate type</th>
+                                <th style="text-align:left; padding:8px; border-bottom:1px solid #e0e0e0;">Ownership</th>
+                            </tr>
+                        </thead>
+                        <tbody id="userCertsTableBody">
+                            <tr><td colspan="5" style="text-align:center; padding:12px; color:#888;">Loading certificates...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div style="margin-top: 20px; text-align: center;">
+                    <button type="button" class="verify-btn" id="updateChangesBtn">Update Changes</button>
+                    <span id="updateChangesMessage" style="margin-left:12px; font-size:0.9em; color:#28a745;"></span>
+                </div>
+            </div>
 
         </div>
     </div>
@@ -523,6 +580,62 @@
                 document.getElementById('pageLoading').classList.remove('active');
             }
         }
+
+        // Load current user's certificates for history table (file name, verification status, upload date)
+        async function loadUserCertificates() {
+            const tbody = document.getElementById('userCertsTableBody');
+            if (!tbody) return;
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:12px; color:#888;">Loading certificates...</td></tr>';
+            try {
+                const res = await fetch('/api/user/certificates');
+                const data = await res.json();
+                if (!data.success) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:12px; color:#c00;">Failed to load certificates.</td></tr>';
+                    return;
+                }
+                const certs = data.certificates || [];
+                if (!certs.length) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:12px; color:#888;">No certificates found. Upload and verify certificates, then click Update Changes.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = certs.map(c => {
+                    const uploadDate = c.upload_date || c.created_at || '';
+                    return `
+                        <tr>
+                            <td style="padding:8px; border-bottom:1px solid #e0e0e0;">${escapeHtml(c.file_name || c.certificate_name || '')}</td>
+                            <td style="padding:8px; border-bottom:1px solid #e0e0e0;">${escapeHtml(c.verification_status || '')}</td>
+                            <td style="padding:8px; border-bottom:1px solid #e0e0e0;">${escapeHtml(uploadDate)}</td>
+                            <td style="padding:8px; border-bottom:1px solid #e0e0e0;">${escapeHtml(c.certificate_name || '')}</td>
+                            <td style="padding:8px; border-bottom:1px solid #e0e0e0;">${escapeHtml(c.ownership_status || '')}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (err) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:12px; color:#c00;">Error: ' + escapeHtml(err.message) + '</td></tr>';
+            }
+        }
+
+        // Update Changes button: refresh My Certificates from database and show confirmation
+        (function() {
+            var updateBtn = document.getElementById('updateChangesBtn');
+            var updateMsg = document.getElementById('updateChangesMessage');
+            if (updateBtn && updateMsg) {
+                updateBtn.addEventListener('click', function() {
+                    updateBtn.disabled = true;
+                    updateMsg.textContent = '';
+                    loadUserCertificates().then(function() {
+                        updateMsg.textContent = 'Certificates saved and list refreshed.';
+                        updateMsg.style.color = '#28a745';
+                        updateBtn.disabled = false;
+                        setTimeout(function() { updateMsg.textContent = ''; }, 4000);
+                    }).catch(function() {
+                        updateBtn.disabled = false;
+                        updateMsg.textContent = 'Refresh failed.';
+                        updateMsg.style.color = '#dc3545';
+                    });
+                });
+            }
+        })();
 
         // Render field sections dynamically
         function renderFields(fields) {
@@ -632,6 +745,22 @@
                             <div class="result-item" id="${fieldId}Keywords" style="display: none;">
                                 <div class="result-label">Matched PRIMARY Keywords:</div>
                                 <div class="keywords-list" id="${fieldId}KeywordsList"></div>
+                            </div>
+                            <div class="result-item" id="${fieldId}OwnershipUserInfo" style="display: none;">
+                                <div class="result-label">Logged-in User Name:</div>
+                                <div class="result-value" id="${fieldId}OwnershipUser">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}OwnershipExtractedInfo" style="display: none;">
+                                <div class="result-label">Extracted Certificate Name:</div>
+                                <div class="result-value" id="${fieldId}OwnershipExtracted">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}OwnershipStatusInfo" style="display: none;">
+                                <div class="result-label">Ownership Verification:</div>
+                                <div class="result-value" id="${fieldId}OwnershipStatus">-</div>
+                            </div>
+                            <div class="result-item" id="${fieldId}OwnershipScoreInfo" style="display: none;">
+                                <div class="result-label">Name Similarity:</div>
+                                <div class="result-value" id="${fieldId}OwnershipScore">-</div>
                             </div>
                             <button class="view-text-btn" id="${fieldId}ViewTextBtn" onclick="toggleExtractedText('${fieldId}')">View Extracted Text</button>
                             <div class="result-item extracted-text-container" id="${fieldId}TextContainer">
@@ -1010,6 +1139,37 @@
                 if (validitySourceInfoElement) validitySourceInfoElement.style.display = 'none';
             }
 
+            // Set ownership information
+            const ownershipUserInfo = document.getElementById(`${sectionId}OwnershipUserInfo`);
+            const ownershipExtractedInfo = document.getElementById(`${sectionId}OwnershipExtractedInfo`);
+            const ownershipStatusInfo = document.getElementById(`${sectionId}OwnershipStatusInfo`);
+            const ownershipScoreInfo = document.getElementById(`${sectionId}OwnershipScoreInfo`);
+
+            if (ownershipUserInfo && ownershipExtractedInfo && ownershipStatusInfo && ownershipScoreInfo) {
+                const loginName = data.login_name || '';
+                const extractedName = data.ownership_extracted_name || data.extracted_name || '';
+                const ownershipStatus = data.ownership_status || 'Not evaluated';
+                const score = (data.ownership_match_score != null)
+                    ? Math.round((data.ownership_match_score || 0) * 100) + '%'
+                    : 'N/A';
+
+                if (loginName || extractedName || ownershipStatus) {
+                    document.getElementById(`${sectionId}OwnershipUser`).textContent = loginName || '-';
+                    document.getElementById(`${sectionId}OwnershipExtracted`).textContent = extractedName || '-';
+                    document.getElementById(`${sectionId}OwnershipStatus`).textContent = ownershipStatus;
+                    document.getElementById(`${sectionId}OwnershipScore`).textContent = score;
+                    ownershipUserInfo.style.display = 'block';
+                    ownershipExtractedInfo.style.display = 'block';
+                    ownershipStatusInfo.style.display = 'block';
+                    ownershipScoreInfo.style.display = 'block';
+                } else {
+                    ownershipUserInfo.style.display = 'none';
+                    ownershipExtractedInfo.style.display = 'none';
+                    ownershipStatusInfo.style.display = 'none';
+                    ownershipScoreInfo.style.display = 'none';
+                }
+            }
+
             // Set message
             const messageElement = document.getElementById(`${sectionId}Message`);
             messageElement.innerHTML = `<div class="message-box ${getMessageClass(data.status)}">${data.message}</div>`;
@@ -1093,8 +1253,9 @@
             });
         }
 
-        // Load fields on page load
+        // Load fields and user certificate history on page load
         loadAndRenderFields();
+        loadUserCertificates();
     </script>
 </body>
 </html>

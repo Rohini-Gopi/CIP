@@ -389,6 +389,34 @@
             margin-bottom: 10px;
             color: #333;
         }
+
+        .table-wrapper {
+            margin-top: 25px;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        th, td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #e0e0e0;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        th {
+            background: #f5f5f5;
+            font-weight: 600;
+            color: #444;
+        }
+
+        tr:nth-child(even) td {
+            background: #fafafa;
+        }
     </style>
 </head>
 <body>
@@ -397,8 +425,9 @@
             <h1>🔧 Admin Panel</h1>
             <p>Certificate Fields Management</p>
             <div class="nav-links">
-                <a href="/">User View</a>
-                <a href="/admin">Admin Panel</a>
+                <a href="{{ url_for('user_dashboard') }}">User Dashboard</a>
+                <a href="{{ url_for('admin_dashboard') }}">Admin Panel</a>
+                <a href="{{ url_for('logout') }}">Logout</a>
             </div>
         </div>
 
@@ -425,6 +454,33 @@
             </div>
 
             <div class="fields-list" id="fieldsList"></div>
+
+            <div style="margin-top: 40px;">
+                <h2 style="color: #333; margin-bottom: 10px;">All Certificates</h2>
+                <p style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">
+                    View all certificates uploaded across users, including ownership and verification statuses.
+                </p>
+                <div class="table-wrapper">
+                    <table id="certsTable">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>User Name</th>
+                                <th>User Email</th>
+                                <th>Certificate</th>
+                                <th>Extracted Name</th>
+                                <th>Ownership Status</th>
+                                <th>Verification Status</th>
+                                <th>Match %</th>
+                                <th>Uploaded At</th>
+                            </tr>
+                        </thead>
+                        <tbody id="certsTableBody">
+                            <tr><td colspan="9" style="text-align:center; color:#888; padding:16px;">Loading certificates...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -565,6 +621,42 @@
                 showMessage('Error loading fields: ' + error.message, true);
             } finally {
                 showLoading(false);
+            }
+        }
+
+        async function loadCertificates() {
+            const tbody = document.getElementById('certsTableBody');
+            if (!tbody) return;
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:#888; padding:16px;">Loading certificates...</td></tr>';
+            try {
+                const response = await fetch('/api/admin/certificates');
+                const data = await response.json();
+                if (!data.success) {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:#c00; padding:16px;">Failed to load certificates.</td></tr>';
+                    return;
+                }
+                if (!data.certificates || data.certificates.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:#888; padding:16px;">No certificates found.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = data.certificates.map(c => {
+                    const pct = (c.match_score != null) ? Math.round(c.match_score * 100) + '%' : 'N/A';
+                    return `
+                        <tr>
+                            <td>${c.id}</td>
+                            <td>${escapeHtml(c.user_name || '')}</td>
+                            <td>${escapeHtml(c.user_email || '')}</td>
+                            <td>${escapeHtml(c.certificate_name || '')}</td>
+                            <td>${escapeHtml(c.extracted_name || '')}</td>
+                            <td>${escapeHtml(c.ownership_status || '')}</td>
+                            <td>${escapeHtml(c.verification_status || '')}</td>
+                            <td>${pct}</td>
+                            <td>${escapeHtml(c.created_at || '')}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (err) {
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:#c00; padding:16px;">Error: ' + escapeHtml(err.message) + '</td></tr>';
             }
         }
 
@@ -746,8 +838,9 @@
             }
         }
 
-        // Load fields on page load
+        // Load fields and certificates on page load
         loadFields();
+        loadCertificates();
     </script>
 </body>
 </html>
